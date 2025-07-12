@@ -5,7 +5,7 @@ interface StandardResponse<T = any> {
   data?: T;
   error?: {
     code: string;
-    message: string;
+    message?: string;
     details?: any;
   };
   meta?: {
@@ -18,6 +18,7 @@ interface StandardResponse<T = any> {
       totalPages?: number;
     };
   };
+  nextAction?: string;
 }
 
 export async function handleApiResponse(response: any): Promise<any> {
@@ -27,9 +28,19 @@ export async function handleApiResponse(response: any): Promise<any> {
   if ('success' in responseData) {
     if (responseData.success === false) {
       // Handle error response
-      const errorMessage = responseData.error?.message || 'Unknown error';
       const errorCode = responseData.error?.code || 'UNKNOWN_ERROR';
-      throw new Error(`[${errorCode}] ${errorMessage}`);
+      // Backend uses 'details' for the error message, not 'message'
+      const errorMessage = responseData.error?.details || responseData.error?.message || 'Unknown error';
+      
+      // Build complete error message
+      let fullMessage = `[${errorCode}] ${errorMessage}`;
+      
+      // Append nextAction if available (these are already well-formatted suggestions)
+      if (responseData.nextAction) {
+        fullMessage += `. ${responseData.nextAction}`;
+      }
+      
+      throw new Error(fullMessage);
     }
     
     // Return the data field for successful responses

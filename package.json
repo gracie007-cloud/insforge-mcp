@@ -1,6 +1,6 @@
 {
   "name": "@insforge/insforge-mcp",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "MCP (Model Context Protocol) server for Insforge backend-as-a-service",
   "type": "module",
   "main": "dist/index.js",
@@ -21,7 +21,7 @@
     "backend-as-a-service"
   ],
   "author": "Insforge",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",
     "commander": "^14.0.0",
