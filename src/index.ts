@@ -21,7 +21,7 @@ const server = new McpServer({
   version: "1.0.0"
 });
 
-const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:3000";
+const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:7130";
 
 // Helper function to get API key (use global if provided, otherwise require it in tool calls)
 const getApiKey = (toolApiKey?: string): string => {
