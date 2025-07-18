@@ -83,6 +83,28 @@ server.tool(
 );
 
 server.tool(
+  "debug-backend",
+  "Debug Insforge backend issues requires this tool. <critical>MANDATORY: Always use this tool FIRST when encountering backend errors, API failures, or backend questions. It will diagnose issues by reading all documentation, verifying current state, and testing with curl.</critical>",
+  {},
+  async () => {
+    try {
+      const content = await fetchDocumentation('debug');
+      return { 
+        content: [{ 
+          type: "text", 
+          text: content
+        }] 
+      };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
+      return { 
+        content: [{ type: "text", text: `Error: ${errMsg}` }] 
+      };
+    }
+  }
+);
+
+server.tool(
   "get-api-key",
   "Retrieves the API key for the Insforge OSS backend. This is used to authenticate all requests to the backend.",
   {},
