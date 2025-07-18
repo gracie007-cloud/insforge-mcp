@@ -187,7 +187,9 @@ server.tool(
       default_value: z.string().optional().describe("Default value for the column"),
       foreign_key: z.object({
         table: z.string().describe("Name of the foreign table"),
-        column: z.string().describe("Name of the foreign column")
+        column: z.string().describe("Name of the foreign column"),
+        on_delete: z.string().optional().describe("ON DELETE action (CASCADE, SET NULL, RESTRICT, NO ACTION)"),
+        on_update: z.string().optional().describe("ON UPDATE action (CASCADE, SET NULL, RESTRICT, NO ACTION)")
       }).optional().describe("Foreign key information")
     })).describe("Array of column definitions")
   },
@@ -280,7 +282,9 @@ server.tool(
       default_value: z.string().optional().describe("Default value for the column"),
       foreign_key: z.object({
         table: z.string().describe("Name of the foreign table"),
-        column: z.string().describe("Name of the foreign column")
+        column: z.string().describe("Name of the foreign column"),
+        on_delete: z.string().optional().describe("ON DELETE action (CASCADE, SET NULL, RESTRICT, NO ACTION)"),
+        on_update: z.string().optional().describe("ON UPDATE action (CASCADE, SET NULL, RESTRICT, NO ACTION)")
       }).optional().describe("Foreign key information")
     })).optional().describe("Columns to add to the table"),
     drop_columns: z.array(z.string()).optional().describe("Names of columns to drop from the table"),
