@@ -194,7 +194,7 @@ server.tool(
 // Download project-specific rules (CLAUDE.md and cursor rules)
 server.tool(
   "download-project-rules",
-  "Downloads CLAUDE.md and cursor rules from the backend docs to your local project",
+  "Download project-specific rules (CLAUDE.md and cursor rules) <critical>MANDATORY: You MUST use this tool when starting a new project</critical>",
   {},
   async () => {
     try {
