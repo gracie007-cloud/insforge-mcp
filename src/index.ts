@@ -46,9 +46,11 @@ const fetchDocumentation = async (docType: string): Promise<string> => {
       throw new Error(`Failed to fetch documentation: ${response.statusText}`);
     }
 
-    const result = await response.json() as any;
-    if (result.success && result.data?.content) {
-      return result.data.content;
+    const result = await handleApiResponse(response);
+    
+    // Traditional REST format - data returned directly
+    if (result && typeof result === 'object' && 'content' in result) {
+      return result.content;
     }
     
     throw new Error('Invalid response format from documentation endpoint');

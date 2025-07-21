@@ -1,53 +1,30 @@
-// Helper functions to handle the new standardized response format
+// Helper functions to handle traditional REST response format
 
-interface StandardResponse<T = any> {
-  success: boolean;
-  data?: T;
-  error?: {
-    code: string;
-    message?: string;
-    details?: any;
-  };
-  meta?: {
-    timestamp: string;
-    pagination?: {
-      total: number;
-      limit: number;
-      offset: number;
-      page?: number;
-      totalPages?: number;
-    };
-  };
+interface ErrorResponse {
+  error: string;
+  message: string;
+  statusCode: number;
   nextAction?: string;
 }
 
 export async function handleApiResponse(response: any): Promise<any> {
-  const responseData = await response.json() as StandardResponse;
+  const responseData = await response.json();
   
-  // Handle new standardized format
-  if ('success' in responseData) {
-    if (responseData.success === false) {
-      // Handle error response
-      const errorCode = responseData.error?.code || 'UNKNOWN_ERROR';
-      // Backend uses 'details' for the error message, not 'message'
-      const errorMessage = responseData.error?.details || responseData.error?.message || 'Unknown error';
-      
-      // Build complete error message
-      let fullMessage = `[${errorCode}] ${errorMessage}`;
-      
-      // Append nextAction if available (these are already well-formatted suggestions)
-      if (responseData.nextAction) {
-        fullMessage += `. ${responseData.nextAction}`;
-      }
-      
-      throw new Error(fullMessage);
+  // Handle traditional REST format
+  if (!response.ok) {
+    // Error response
+    const errorData = responseData as ErrorResponse;
+    let fullMessage = errorData.message || errorData.error || 'Unknown error';
+    
+    // Append nextAction if available
+    if (errorData.nextAction) {
+      fullMessage += `. ${errorData.nextAction}`;
     }
     
-    // Return the data field for successful responses
-    return responseData.data;
+    throw new Error(fullMessage);
   }
   
-  // Fallback for old format (shouldn't happen if all endpoints are updated)
+  // Success response - data returned directly
   return responseData;
 }
 
