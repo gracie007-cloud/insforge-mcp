@@ -407,7 +407,9 @@ server.tool(
         on_update: z.string().optional().describe("ON UPDATE action (CASCADE, SET NULL, RESTRICT, NO ACTION)")
       }).optional().describe("Foreign key information")
     })).optional().describe("Columns to add to the table"),
-    drop_columns: z.array(z.string()).optional().describe("Names of columns to drop from the table"),
+    drop_columns: z.array(z.object({
+      name: z.string().describe("Name of column to drop")
+    })).optional().describe("Columns to drop from the table"),
     rename_columns: z.record(z.string()).optional().describe("Object mapping old column names to new names"),
     add_fkey_columns: z.array(z.object({
       name: z.string().describe("Name of existing column to add foreign key to"),
