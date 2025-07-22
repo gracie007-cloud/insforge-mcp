@@ -278,15 +278,35 @@ server.tool(
       // Preprocess columns to format default values based on type
       const processedColumns = columns.map(col => {
         if (col.defaultValue !== undefined) {
-          const needsQuotes = ['string', 'datetime'].includes(col.type);
           const isFunction = col.defaultValue.includes('(');
           const isAlreadyQuoted = col.defaultValue.startsWith("'") && col.defaultValue.endsWith("'");
           
-          // Add quotes for string/datetime values that aren't functions or already quoted
-          if (needsQuotes && !isFunction && !isAlreadyQuoted) {
-            col.defaultValue = `'${col.defaultValue}'`;
+          // Handle different column types
+          switch(col.type) {
+            case 'string':
+              // Add quotes for string values that aren't functions or already quoted
+              if (!isFunction && !isAlreadyQuoted) {
+                col.defaultValue = `'${col.defaultValue}'`;
+              }
+              break;
+              
+            case 'datetime':
+              // For datetime, use functions like now() or CURRENT_TIMESTAMP
+              // If it's not a function and not CURRENT_TIMESTAMP, it's likely an error
+              if (!isFunction && col.defaultValue !== 'CURRENT_TIMESTAMP') {
+                console.warn(`Warning: datetime default '${col.defaultValue}' may not work. Use 'now()' or 'CURRENT_TIMESTAMP'`);
+              }
+              break;
+              
+            case 'json':
+              // JSON defaults need to be wrapped in single quotes
+              if (!isAlreadyQuoted) {
+                col.defaultValue = `'${col.defaultValue}'`;
+              }
+              break;
+              
+            // uuid, integer, float, boolean can be used as-is
           }
-          // Numbers and booleans can be used as-is
         }
         return col;
       });
