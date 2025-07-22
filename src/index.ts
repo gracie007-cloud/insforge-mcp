@@ -262,7 +262,7 @@ server.tool(
       type: z.string().describe("Column type (e.g., string, integer, float, boolean, datetime, uuid, json)"),
       unique: z.boolean().optional().describe("Whether the column is unique"),
       nullable: z.boolean().describe("Whether the column can be null"),
-      default_value: z.string().optional().describe("Default value for the column"),
+      defaultValue: z.string().optional().describe("Default value for the column"),
       foreign_key: z.object({
         table: z.string().describe("Name of the foreign table"),
         column: z.string().describe("Name of the foreign column"),
@@ -357,7 +357,7 @@ server.tool(
       type: z.string().describe("Column type (string, integer, float, boolean, datetime, uuid, json)"),
       unique: z.boolean().optional().describe("Whether the column is unique"),
       nullable: z.boolean().optional().describe("Whether the column allows NULL values"),
-      default_value: z.string().optional().describe("Default value for the column"),
+      defaultValue: z.string().optional().describe("Default value for the column"),
       foreign_key: z.object({
         table: z.string().describe("Name of the foreign table"),
         column: z.string().describe("Name of the foreign column"),
