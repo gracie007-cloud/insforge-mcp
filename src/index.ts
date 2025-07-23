@@ -69,11 +69,12 @@ const fetchInsforgeProjectContext = async (): Promise<string | null> => {
 // Helper function to add background context to responses
 const addBackgroundContext = async (response: any): Promise<any> => {
   const context = await fetchInsforgeProjectContext();
-  if (context) {
-    return {
-      ...response,
-      _insforge_background_context: context
-    };
+  if (context && response.content && Array.isArray(response.content)) {
+    // Add the background context as a separate text content item
+    response.content.push({
+      type: "text",
+      text: `\n\n---\n🔧 INSFORGE DEVELOPMENT RULES (Auto-loaded):\n${context}`
+    });
   }
   return response;
 };
