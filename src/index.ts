@@ -56,6 +56,28 @@ const fetchDocumentation = async (docType: string): Promise<string> => {
   }
 };
 
+// Helper function to fetch insforge-project.md content
+const fetchInsforgeProjectContext = async (): Promise<string | null> => {
+  try {
+    return await fetchDocumentation('insforge-project');
+  } catch (error) {
+    console.error('Failed to fetch insforge-project.md:', error);
+    return null;
+  }
+};
+
+// Helper function to add background context to responses
+const addBackgroundContext = async (response: any): Promise<any> => {
+  const context = await fetchInsforgeProjectContext();
+  if (context) {
+    return {
+      ...response,
+      _insforge_background_context: context
+    };
+  }
+  return response;
+};
+
 // Helper function to preprocess column default values based on type
 const preprocessColumnDefaults = <T extends { defaultValue?: string; type?: string }>(columns: T[]): T[] => {
   return columns.map(col => {
@@ -105,17 +127,19 @@ server.tool(
   async () => {
     try {
       const content = await fetchDocumentation('instructions');
-      return { 
+      const response = { 
         content: [{ 
           type: "text", 
           text: content
         }] 
       };
+      return await addBackgroundContext(response);
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return { 
+      const errorResponse = { 
         content: [{ type: "text", text: `Error: ${errMsg}` }] 
       };
+      return await addBackgroundContext(errorResponse);
     }
   }
 );
@@ -127,17 +151,17 @@ server.tool(
   async () => {
     try {
       const content = await fetchDocumentation('debug');
-      return { 
+      return await addBackgroundContext({ 
         content: [{ 
           type: "text", 
           text: content
         }] 
-      };
+      });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return { 
+      return await addBackgroundContext({ 
         content: [{ type: "text", text: `Error: ${errMsg}` }] 
-      };
+      });
     }
   }
 );
@@ -148,14 +172,14 @@ server.tool(
   {},
   async () => {
     try {
-      return {
+      return await addBackgroundContext({
         content: [{ type: "text", text: `API key: ${getApiKey()}` }]
-      };
+      });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return { 
+      return await addBackgroundContext({ 
         content: [{ type: "text", text: `Error: ${errMsg}` }] 
-      };
+      });
     }
   }
 );
@@ -168,17 +192,17 @@ server.tool(
   async () => {
     try {
       const content = await fetchDocumentation('db-api');
-      return { 
+      return await addBackgroundContext({ 
         content: [{ 
           type: "text", 
           text: content
         }] 
-      };
+      });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return { 
+      return await addBackgroundContext({ 
         content: [{ type: "text", text: `Error: ${errMsg}` }] 
-      };
+      });
     }
   }
 );
@@ -191,17 +215,17 @@ server.tool(
   async () => {
     try {
       const content = await fetchDocumentation('auth-api');
-      return { 
+      return await addBackgroundContext({ 
         content: [{ 
           type: "text", 
           text: content
         }] 
-      };
+      });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return { 
+      return await addBackgroundContext({ 
         content: [{ type: "text", text: `Error: ${errMsg}` }] 
-      };
+      });
     }
   }
 );
@@ -214,17 +238,17 @@ server.tool(
   async () => {
     try {
       const content = await fetchDocumentation('storage-api');
-      return { 
+      return await addBackgroundContext({ 
         content: [{ 
           type: "text", 
           text: content
         }] 
-      };
+      });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return { 
+      return await addBackgroundContext({ 
         content: [{ type: "text", text: `Error: ${errMsg}` }] 
-      };
+      });
     }
   }
 );
@@ -263,24 +287,24 @@ server.tool(
         await fs.writeFile(cursorRulesPath, result.content, 'utf-8');
         outputs.push(`✓ Saved cursor rules to: ${cursorRulesPath}`);
         
-        return {
+        return await addBackgroundContext({
           content: [{
             type: "text",
             text: outputs.join('\n')
           }]
-        };
+        });
       }
       
       throw new Error('Invalid response format from project rules endpoint');
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: `Error downloading project rules: ${errMsg}`
         }],
         isError: true
-      };
+      });
     }
   }
 );
@@ -330,21 +354,21 @@ server.tool(
 
       const result = await handleApiResponse(response);
       
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: formatSuccessMessage('Table created', result)
         }]
-      };
+      });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: `Error creating table: ${errMsg}`
         }],
         isError: true
-      };
+      });
     }
   }
 );
@@ -369,21 +393,21 @@ server.tool(
 
       const result = await handleApiResponse(response);
       
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: formatSuccessMessage('Table deleted', result)
         }]
-      };
+      });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: `Error deleting table: ${errMsg}`
         }],
         isError: true
-      };
+      });
     }
   }
 );
@@ -450,21 +474,21 @@ server.tool(
 
       const result = await handleApiResponse(response);
       
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: formatSuccessMessage('Table modified', result)
         }]
-      };
+      });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: `Error modifying table: ${errMsg}`
         }],
         isError: true
-      };
+      });
     }
   }
 );
@@ -489,21 +513,21 @@ server.tool(
 
       const result = await handleApiResponse(response);
       
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: formatSuccessMessage('Schema retrieved', result)
         }]
-      };
+      });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: `Error getting table schema: ${errMsg}`
         }],
         isError: true
-      };
+      });
     }
   }
 );
@@ -526,21 +550,21 @@ server.tool(
 
       const metadata = await handleApiResponse(response);
       
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: `Backend metadata:\n\n${JSON.stringify(metadata, null, 2)}`
         }]
-      };
+      });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: `Error retrieving backend metadata: ${errMsg}`
         }],
         isError: true
-      };
+      });
     }
   }
 );
@@ -571,21 +595,21 @@ server.tool(
 
       const result = await handleApiResponse(response);
       
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: formatSuccessMessage('Bucket created', result)
         }]
-      };
+      });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: `Error creating bucket: ${errMsg}`
         }],
         isError: true
-      };
+      });
     }
   }
 );
@@ -607,21 +631,21 @@ server.tool(
 
       const result = await handleApiResponse(response);
       
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: formatSuccessMessage('Buckets retrieved', result)
         }]
-      };
+      });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: `Error listing buckets: ${errMsg}`
         }],
         isError: true
-      };
+      });
     }
   }
 );
@@ -646,21 +670,21 @@ server.tool(
 
       const result = await handleApiResponse(response);
       
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: formatSuccessMessage('Bucket deleted', result)
         }]
-      };
+      });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return {
+      return await addBackgroundContext({
         content: [{
           type: "text",
           text: `Error deleting bucket: ${errMsg}`
         }],
         isError: true
-      };
+      });
     }
   }
 );
