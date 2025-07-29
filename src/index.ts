@@ -80,33 +80,33 @@ const addBackgroundContext = async (response: any): Promise<any> => {
 };
 
 // Helper function to preprocess column default values based on type
-const preprocessColumnDefaults = <T extends { defaultValue?: string; type?: string }>(columns: T[]): T[] => {
+const preprocessColumnDefaults = <T extends { default_value?: string; type?: string }>(columns: T[]): T[] => {
   return columns.map(col => {
-    if (col.defaultValue !== undefined) {
-      const isFunction = col.defaultValue.includes('(');
-      const isAlreadyQuoted = col.defaultValue.startsWith("'") && col.defaultValue.endsWith("'");
+    if (col.default_value !== undefined) {
+      const isFunction = col.default_value.includes('(');
+      const isAlreadyQuoted = col.default_value.startsWith("'") && col.default_value.endsWith("'");
       
       // Handle different column types
       switch(col.type) {
         case 'string':
           // Add quotes for string values that aren't functions or already quoted
           if (!isFunction && !isAlreadyQuoted) {
-            col.defaultValue = `'${col.defaultValue}'`;
+            col.default_value = `'${col.default_value}'`;
           }
           break;
           
         case 'datetime':
           // For datetime, use functions like now() or CURRENT_TIMESTAMP
           // If it's not a function and not CURRENT_TIMESTAMP, it's likely an error
-          if (!isFunction && col.defaultValue !== 'CURRENT_TIMESTAMP') {
-            console.warn(`Warning: datetime default '${col.defaultValue}' may not work. Use 'now()' or 'CURRENT_TIMESTAMP'`);
+          if (!isFunction && col.default_value !== 'CURRENT_TIMESTAMP') {
+            console.warn(`Warning: datetime default '${col.default_value}' may not work. Use 'now()' or 'CURRENT_TIMESTAMP'`);
           }
           break;
           
         case 'json':
           // JSON defaults need to be wrapped in single quotes
           if (!isAlreadyQuoted) {
-            col.defaultValue = `'${col.defaultValue}'`;
+            col.default_value = `'${col.default_value}'`;
           }
           break;
           
@@ -325,7 +325,7 @@ server.tool(
       type: z.string().describe("Column type (e.g., string, integer, float, boolean, datetime, uuid, json)"),
       unique: z.boolean().optional().describe("Whether the column is unique"),
       nullable: z.boolean().describe("Whether the column can be null"),
-      defaultValue: z.string().optional().describe("Default value for the column"),
+      default_value: z.string().optional().describe("Default value for the column"),
       foreign_key: z.object({
         table: z.string().describe("Name of the foreign table"),
         column: z.string().describe("Name of the foreign column"),
@@ -424,7 +424,7 @@ server.tool(
       type: z.string().describe("Column type (string, integer, float, boolean, datetime, uuid, json)"),
       unique: z.boolean().optional().describe("Whether the column is unique"),
       nullable: z.boolean().optional().describe("Whether the column allows NULL values"),
-      defaultValue: z.string().optional().describe("Default value for the column"),
+      default_value: z.string().optional().describe("Default value for the column"),
       foreign_key: z.object({
         table: z.string().describe("Name of the foreign table"),
         column: z.string().describe("Name of the foreign column"),
