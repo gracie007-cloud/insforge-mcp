@@ -18,6 +18,31 @@ const { api_key } = options;
 
 const GLOBAL_API_KEY = api_key || process.env.API_KEY || '';
 
+// Schema validation constants matching database.schema.ts
+const COLUMN_TYPES = [
+  "string",
+  "integer",
+  "float",
+  "boolean",
+  "datetime",
+  "uuid",
+  "json"
+] as const;
+
+const ON_DELETE_ACTIONS = [
+  "CASCADE",
+  "SET NULL",
+  "SET DEFAULT",
+  "RESTRICT",
+  "NO ACTION"
+] as const;
+
+const ON_UPDATE_ACTIONS = [
+  "CASCADE",
+  "RESTRICT",
+  "NO ACTION"
+] as const;
+
 const server = new McpServer({
   name: "insforge-mcp",
   version: "1.0.0"
@@ -322,15 +347,16 @@ server.tool(
     table_name: z.string().describe("Name of the table to create"),
     columns: z.array(z.object({
       name: z.string().describe("Column name"),
-      type: z.string().describe("Column type (e.g., string, integer, float, boolean, datetime, uuid, json)"),
+      type: z.enum(COLUMN_TYPES).describe("Column type: string, integer, float, boolean, datetime, uuid, or json"),
       is_unique: z.boolean().describe("Whether the column is unique"),
+      primary_key: z.boolean().optional().describe("Whether the column is a primary key"),
       nullable: z.boolean().describe("Whether the column can be null"),
       default_value: z.string().optional().describe("Default value for the column"),
       foreign_key: z.object({
-        table: z.string().describe("Name of the foreign table"),
-        column: z.string().describe("Name of the foreign column"),
-        on_delete: z.string().optional().describe("ON DELETE action (CASCADE, SET NULL, RESTRICT, NO ACTION)"),
-        on_update: z.string().optional().describe("ON UPDATE action (CASCADE, SET NULL, RESTRICT, NO ACTION)")
+        reference_table: z.string().describe("Name of the foreign table"),
+        reference_column: z.string().describe("Name of the foreign column"),
+        on_delete: z.enum(ON_DELETE_ACTIONS).describe("ON DELETE action"),
+        on_update: z.enum(ON_UPDATE_ACTIONS).describe("ON UPDATE action")
       }).optional().describe("Foreign key information")
     })).describe("Array of column definitions")
   },
@@ -421,15 +447,15 @@ server.tool(
     table_name: z.string().describe("Name of the table to modify"),
     add_columns: z.array(z.object({
       name: z.string().describe("Column name"),
-      type: z.string().describe("Column type (string, integer, float, boolean, datetime, uuid, json)"),
+      type: z.enum(COLUMN_TYPES).describe("Column type"),
       is_unique: z.boolean().describe("Whether the column is unique"),
       nullable: z.boolean().describe("Whether the column allows NULL values"),
       default_value: z.string().optional().describe("Default value for the column"),
       foreign_key: z.object({
-        table: z.string().describe("Name of the foreign table"),
-        column: z.string().describe("Name of the foreign column"),
-        on_delete: z.string().optional().describe("ON DELETE action (CASCADE, SET NULL, RESTRICT, NO ACTION)"),
-        on_update: z.string().optional().describe("ON UPDATE action (CASCADE, SET NULL, RESTRICT, NO ACTION)")
+        reference_table: z.string().describe("Name of the foreign table"),
+        reference_column: z.string().describe("Name of the foreign column"),
+        on_delete: z.enum(ON_DELETE_ACTIONS).describe("ON DELETE action"),
+        on_update: z.enum(ON_UPDATE_ACTIONS).describe("ON UPDATE action")
       }).optional().describe("Foreign key information")
     })).optional().describe("Columns to add to the table"),
     drop_columns: z.array(z.object({
@@ -439,10 +465,10 @@ server.tool(
     add_fkey_columns: z.array(z.object({
       name: z.string().describe("Name of existing column to add foreign key to"),
       foreign_key: z.object({
-        table: z.string().describe("Name of the foreign table"),
-        column: z.string().describe("Name of the foreign column"),
-        on_delete: z.string().optional().describe("ON DELETE action (CASCADE, SET NULL, RESTRICT, NO ACTION)"),
-        on_update: z.string().optional().describe("ON UPDATE action (CASCADE, SET NULL, RESTRICT, NO ACTION)")
+        reference_table: z.string().describe("Name of the foreign table"),
+        reference_column: z.string().describe("Name of the foreign column"),
+        on_delete: z.enum(ON_DELETE_ACTIONS).describe("ON DELETE action"),
+        on_update: z.enum(ON_UPDATE_ACTIONS).describe("ON UPDATE action")
       }).describe("Foreign key constraint details")
     })).optional().describe("Foreign key constraints to add to existing columns"),
     drop_fkey_columns: z.array(z.object({
