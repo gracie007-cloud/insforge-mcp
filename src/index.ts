@@ -1,60 +1,78 @@
-#!/usr/bin/env node
-
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { z } from 'zod';
 import fetch from 'node-fetch';
-import { program } from "commander";
-import { handleApiResponse, formatSuccessMessage } from './response-handler.js';
+import { program } from 'commander';
 import { promises as fs } from 'fs';
-import path from 'path';
+import { handleApiResponse, formatSuccessMessage } from './response-handler.js';
+import { UsageTracker } from './usage-tracker.js';
+import {
+  ColumnType,
+  CreateTableRequest,
+  UpdateTableSchemaRequest,
+  createTableRequestSchema,
+  updateTableSchemaRequestSchema,
+  CreateBucketRequest,
+  createBucketRequestSchema,
+  rawSQLRequestSchema,
+  RawSQLRequest,
+} from '@insforge/shared-schemas';
 
 // Parse command line arguments
-program
-  .option('--api_key <value>', 'API Key');
+program.option('--api_key <value>', 'API Key');
 program.parse(process.argv);
 const options = program.opts();
 const { api_key } = options;
 
 const GLOBAL_API_KEY = api_key || process.env.API_KEY || '';
 
-// Schema validation constants matching database.schema.ts
-const COLUMN_TYPES = [
-  "string",
-  "integer",
-  "float",
-  "boolean",
-  "datetime",
-  "uuid",
-  "json"
-] as const;
-
-const ON_DELETE_ACTIONS = [
-  "CASCADE",
-  "SET NULL",
-  "SET DEFAULT",
-  "RESTRICT",
-  "NO ACTION"
-] as const;
-
-const ON_UPDATE_ACTIONS = [
-  "CASCADE",
-  "RESTRICT",
-  "NO ACTION"
-] as const;
+// The schemas are now imported directly from shared-schemas
 
 const server = new McpServer({
-  name: "insforge-mcp",
-  version: "1.0.0"
+  name: 'insforge-mcp',
+  version: '1.0.0',
 });
 
-const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:7130";
+const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:7130';
+
+// Initialize usage tracker
+const usageTracker = new UsageTracker(API_BASE_URL, GLOBAL_API_KEY);
+
+// Helper function to track tool usage
+async function trackToolUsage(toolName: string, success: boolean = true): Promise<void> {
+  if (GLOBAL_API_KEY) {
+    await usageTracker.trackUsage(toolName, success);
+  }
+}
+
+// Wrapper function to add usage tracking to tools
+function withUsageTracking<T extends any[], R>(
+  toolName: string,
+  handler: (...args: T) => Promise<R>
+): (...args: T) => Promise<R> {
+  return async (...args: T): Promise<R> => {
+    try {
+      const result = await handler(...args);
+      await trackToolUsage(toolName, true);
+      return result;
+    } catch (error) {
+      await trackToolUsage(toolName, false);
+      throw error;
+    }
+  };
+}
 
 // Helper function to get API key (use global if provided, otherwise require it in tool calls)
 const getApiKey = (toolApiKey?: string): string => {
-  if (GLOBAL_API_KEY) return GLOBAL_API_KEY;
-  if (toolApiKey) return toolApiKey;
-  throw new Error('API key is required. Either pass --api_key as command line argument or provide api_key in tool calls.');
+  if (GLOBAL_API_KEY) {
+    return GLOBAL_API_KEY;
+  }
+  if (toolApiKey) {
+    return toolApiKey;
+  }
+  throw new Error(
+    'API key is required. Either pass --api_key as command line argument or provide api_key in tool calls.'
+  );
 };
 
 // Helper function to rdocumentation from backend
@@ -63,78 +81,94 @@ const fetchDocumentation = async (docType: string): Promise<string> => {
     const response = await fetch(`${API_BASE_URL}/api/docs/${docType}`, {
       method: 'GET',
       headers: {
-        'Content-Type': 'application/json'
-      }
+        'Content-Type': 'application/json',
+      },
     });
 
     const result = await handleApiResponse(response);
-    
+
     // Traditional REST format - data returned directly as { type, content }
     if (result && typeof result === 'object' && 'content' in result) {
-      return result.content;
+      // Replace localhost:7130 with the actual API_BASE_URL in documentation
+      let content = result.content;
+      content = content.replace(/http:\/\/localhost:7130/g, API_BASE_URL);
+      return content;
     }
-    
+
     throw new Error('Invalid response format from documentation endpoint');
   } catch (error) {
-    const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
+    const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
     throw new Error(`Unable to retrieve ${docType} documentation: ${errMsg}`);
   }
 };
 
 // Helper function to fetch insforge-project.md content
-const fetchInsforgeProjectContext = async (): Promise<string | null> => {
+const fetchInsforgeInstructionsContext = async (): Promise<string | null> => {
   try {
-    return await fetchDocumentation('project');
+    return await fetchDocumentation('instructions');
   } catch (error) {
-    console.error('Failed to fetch insforge-project.md:', error);
+    console.error('Failed to fetch insforge-instructions.md:', error);
     return null;
   }
 };
 
 // Helper function to add background context to responses
 const addBackgroundContext = async (response: any): Promise<any> => {
-  const context = await fetchInsforgeProjectContext();
+  const context = await fetchInsforgeInstructionsContext();
   if (context && response.content && Array.isArray(response.content)) {
     // Add the background context as a separate text content item
     response.content.push({
-      type: "text",
-      text: `\n\n---\n🔧 INSFORGE DEVELOPMENT RULES (Auto-loaded):\n${context}`
+      type: 'text',
+      text: `\n\n---\n🔧 INSFORGE DEVELOPMENT RULES (Auto-loaded):\n${context}`,
     });
   }
   return response;
 };
 
 // Helper function to preprocess column default values based on type
-const preprocessColumnDefaults = <T extends { default_value?: string; type?: string }>(columns: T[]): T[] => {
-  return columns.map(col => {
-    if (col.default_value !== undefined) {
-      const isFunction = col.default_value.includes('(');
-      const isAlreadyQuoted = col.default_value.startsWith("'") && col.default_value.endsWith("'");
-      
+// This function works with the shared schema column type
+const preprocessColumnDefaults = <
+  T extends {
+    defaultValue?: string;
+    type: ColumnType;
+    columnName: string;
+    isNullable: boolean;
+    isUnique: boolean;
+  },
+>(
+  columns: T[]
+): T[] => {
+  return columns.map((col) => {
+    if (col.defaultValue !== undefined) {
+      const isFunction = col.defaultValue.includes('(');
+      const isAlreadyQuoted = col.defaultValue.startsWith("'") && col.defaultValue.endsWith("'");
+
       // Handle different column types
-      switch(col.type) {
-        case 'string':
+      switch (col.type) {
+        case ColumnType.STRING:
           // Add quotes for string values that aren't functions or already quoted
           if (!isFunction && !isAlreadyQuoted) {
-            col.default_value = `'${col.default_value}'`;
+            col.defaultValue = `'${col.defaultValue}'`;
           }
           break;
-          
-        case 'datetime':
+
+        case ColumnType.DATETIME:
           // For datetime, use functions like now() or CURRENT_TIMESTAMP
           // If it's not a function and not CURRENT_TIMESTAMP, it's likely an error
-          if (!isFunction && col.default_value !== 'CURRENT_TIMESTAMP') {
-            console.warn(`Warning: datetime default '${col.default_value}' may not work. Use 'now()' or 'CURRENT_TIMESTAMP'`);
+          if (!isFunction && col.defaultValue !== 'CURRENT_TIMESTAMP') {
+            console.warn(
+              `Warning: datetime default '${col.defaultValue}' may not work. Use 'now()' or 'CURRENT_TIMESTAMP'`
+            );
           }
           break;
-          
-        case 'json':
+
+        case ColumnType.JSON:
           // JSON defaults need to be wrapped in single quotes
           if (!isAlreadyQuoted) {
-            col.default_value = `'${col.default_value}'`;
+            col.defaultValue = `'${col.defaultValue}'`;
           }
           break;
-          
+
         // uuid, integer, float, boolean can be used as-is
       }
     }
@@ -147,453 +181,443 @@ const preprocessColumnDefaults = <T extends { default_value?: string; type?: str
 
 // Get main instructions for AI agents
 server.tool(
-  "get-instructions",
-  "Instruction Essential backend setup tool. <critical>MANDATORY: You MUST use this tool FIRST before attempting any backend operations. Contains required API endpoints, authentication details, and setup instructions.</critical>",
+  'get-instructions',
+  'Instruction Essential backend setup tool. <critical>MANDATORY: You MUST use this tool FIRST before attempting any backend operations. Contains required API endpoints, authentication details, and setup instructions.</critical>',
   {},
-  async () => {
+  withUsageTracking('get-instructions', async () => {
     try {
       const content = await fetchDocumentation('instructions');
-      const response = { 
-        content: [{ 
-          type: "text", 
-          text: content
-        }] 
+      const response = {
+        content: [
+          {
+            type: 'text',
+            text: content,
+          },
+        ],
       };
       return await addBackgroundContext(response);
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      const errorResponse = { 
-        content: [{ type: "text", text: `Error: ${errMsg}` }] 
+      const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+      const errorResponse = {
+        content: [{ type: 'text', text: `Error: ${errMsg}` }],
       };
       return await addBackgroundContext(errorResponse);
     }
-  }
+  })
 );
 
 server.tool(
-  "debug-backend",
-  "Debug Insforge backend issues requires this tool. <critical>MANDATORY: Always use this tool FIRST when encountering backend errors, API failures, or backend questions. It will diagnose issues by reading all documentation, verifying current state, and testing with curl.</critical>",
-  {},
-  async () => {
-    try {
-      const content = await fetchDocumentation('debug');
-      return await addBackgroundContext({ 
-        content: [{ 
-          type: "text", 
-          text: content
-        }] 
-      });
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return await addBackgroundContext({ 
-        content: [{ type: "text", text: `Error: ${errMsg}` }] 
-      });
-    }
-  }
-);
-
-server.tool(
-  "get-api-key",
-  "Retrieves the API key for the Insforge OSS backend. This is used to authenticate all requests to the backend.",
+  'get-api-key',
+  'Retrieves the API key for the Insforge OSS backend. This is used to authenticate all requests to the backend.',
   {},
   async () => {
     try {
       return await addBackgroundContext({
-        content: [{ type: "text", text: `API key: ${getApiKey()}` }]
+        content: [{ type: 'text', text: `API key: ${getApiKey()}` }],
       });
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return await addBackgroundContext({ 
-        content: [{ type: "text", text: `Error: ${errMsg}` }] 
+      const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+      return await addBackgroundContext({
+        content: [{ type: 'text', text: `Error: ${errMsg}` }],
       });
     }
   }
 );
 
-// Get database API documentation  
-server.tool(
-  "get-db-api",
-  "Retrieves documentation for Insforge OSS database CRUD operations, including automatic table creation and smart schema management",
-  {},
-  async () => {
-    try {
-      const content = await fetchDocumentation('db-api');
-      return await addBackgroundContext({ 
-        content: [{ 
-          type: "text", 
-          text: content
-        }] 
-      });
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return await addBackgroundContext({ 
-        content: [{ type: "text", text: `Error: ${errMsg}` }] 
-      });
-    }
-  }
-);
-
-// Get authentication API documentation
-server.tool(
-  "get-auth-api",
-  "Retrieves documentation for Insforge OSS authentication API, including JWT tokens, project management, and API key generation",
-  {},
-  async () => {
-    try {
-      const content = await fetchDocumentation('auth-api');
-      return await addBackgroundContext({ 
-        content: [{ 
-          type: "text", 
-          text: content
-        }] 
-      });
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return await addBackgroundContext({ 
-        content: [{ type: "text", text: `Error: ${errMsg}` }] 
-      });
-    }
-  }
-);
-
-// Get storage API documentation
-server.tool(
-  "get-storage-api",
-  "Retrieves documentation for Insforge OSS file storage API, including file uploads, metadata handling, and automatic cleanup",
-  {},
-  async () => {
-    try {
-      const content = await fetchDocumentation('storage-api');
-      return await addBackgroundContext({ 
-        content: [{ 
-          type: "text", 
-          text: content
-        }] 
-      });
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return await addBackgroundContext({ 
-        content: [{ type: "text", text: `Error: ${errMsg}` }] 
-      });
-    }
-  }
-);
-
+/*
 // Download project-specific rules (CLAUDE.md and cursor rules)
 server.tool(
-  "download-project-rules",
-  "Download project-specific rules (CLAUDE.md and cursor rules) <critical>MANDATORY: You MUST use this tool when starting a new project</critical>",
+  'download-project-rules',
+  'Download project-specific rules (CLAUDE.md and cursor rules) <critical>MANDATORY: You MUST use this tool when starting a new project</critical>',
   {},
-  async () => {
+  withUsageTracking('download-project-rules', async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/docs/project`, {
         method: 'GET',
         headers: {
-          'Content-Type': 'application/json'
-        }
+          'Content-Type': 'application/json',
+        },
       });
 
       const result = await handleApiResponse(response);
-      
+
       // Traditional REST format - data returned directly as { type, content }
       if (result && typeof result === 'object' && 'content' in result) {
         const outputs = [];
-        
+
         // Save as CLAUDE.md
         const claudeMdPath = path.join(process.cwd(), 'CLAUDE.md');
         await fs.writeFile(claudeMdPath, result.content, 'utf-8');
         outputs.push(`✓ Saved CLAUDE.md to: ${claudeMdPath}`);
-        
+
         // Also save as cursor rules (same content works for both)
         const cursorRulesDir = path.join(process.cwd(), '.cursor', 'rules');
         const cursorRulesPath = path.join(cursorRulesDir, 'cursor-rules.mdc');
-        
+
         // Create directory if it doesn't exist
         await fs.mkdir(cursorRulesDir, { recursive: true });
         await fs.writeFile(cursorRulesPath, result.content, 'utf-8');
         outputs.push(`✓ Saved cursor rules to: ${cursorRulesPath}`);
-        
+
         return await addBackgroundContext({
-          content: [{
-            type: "text",
-            text: outputs.join('\n')
-          }]
+          content: [
+            {
+              type: 'text',
+              text: outputs.join('\n'),
+            },
+          ],
         });
       }
-      
+
       throw new Error('Invalid response format from project rules endpoint');
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
+      const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
       return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: `Error downloading project rules: ${errMsg}`
-        }],
-        isError: true
+        content: [
+          {
+            type: 'text',
+            text: `Error downloading project rules: ${errMsg}`,
+          },
+        ],
+        isError: true,
       });
     }
-  }
+  })
 );
+*/
 
 // --------------------------------------------------
 // Core Database Tools
-
-
+/*
 server.tool(
-  "create-table",
-  "Create a new table with explicit schema definition",
+  'create-table',
+  'Create a new table with explicit schema definition',
   {
-    api_key: z.string().optional().describe("API key for authentication (optional if provided via --api_key)"),
-    table_name: z.string().describe("Name of the table to create"),
-    columns: z.array(z.object({
-      name: z.string().describe("Column name"),
-      type: z.enum(COLUMN_TYPES).describe("Column type: string, integer, float, boolean, datetime, uuid, or json"),
-      is_unique: z.boolean().describe("Whether the column is unique"),
-      primary_key: z.boolean().optional().describe("Whether the column is a primary key"),
-      nullable: z.boolean().describe("Whether the column can be null"),
-      default_value: z.string().optional().describe("Default value for the column"),
-      foreign_key: z.object({
-        reference_table: z.string().describe("Name of the foreign table"),
-        reference_column: z.string().describe("Name of the foreign column"),
-        on_delete: z.enum(ON_DELETE_ACTIONS).describe("ON DELETE action"),
-        on_update: z.enum(ON_UPDATE_ACTIONS).describe("ON UPDATE action")
-      }).optional().describe("Foreign key information")
-    })).describe("Array of column definitions")
+    ...createTableRequestSchema.shape,
+    apiKey: z
+      .string()
+      .optional()
+      .describe('API key for authentication (optional if provided via --api_key)'),
   },
-  async ({ api_key, table_name, columns }) => {
+  withUsageTracking('create-table', async ({ apiKey, tableName, columns, rlsEnabled }) => {
     try {
-      const actualApiKey = getApiKey(api_key);
-      
+      const actualApiKey = getApiKey(apiKey);
+
       // Preprocess columns to format default values based on type
       const processedColumns = preprocessColumnDefaults(columns);
-      
+
+      const requestBody: CreateTableRequest = {
+        tableName,
+        columns: processedColumns,
+        rlsEnabled: rlsEnabled ?? true,
+      };
+
       const response = await fetch(`${API_BASE_URL}/api/database/tables`, {
         method: 'POST',
         headers: {
           'x-api-key': actualApiKey,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          table_name,
-          columns: processedColumns
-        })
+        body: JSON.stringify(requestBody),
       });
 
       const result = await handleApiResponse(response);
-      
+
       return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: formatSuccessMessage('Table created', result)
-        }]
+        content: [
+          {
+            type: 'text',
+            text: formatSuccessMessage('Table created', result),
+          },
+        ],
       });
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
+      const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
       return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: `Error creating table: ${errMsg}`
-        }],
-        isError: true
+        content: [
+          {
+            type: 'text',
+            text: `Error creating table: ${errMsg}`,
+          },
+        ],
+        isError: true,
       });
     }
-  }
+  })
 );
 
 server.tool(
-  "delete-table",
-  "Permanently deletes a table and all its data",
+  'delete-table',
+  'Permanently deletes a table and all its data',
   {
-    api_key: z.string().optional().describe("API key for authentication (optional if provided via --api_key)"),
-    table_name: z.string().describe("Name of the table to delete")
+    apiKey: z
+      .string()
+      .optional()
+      .describe('API key for authentication (optional if provided via --api_key)'),
+    tableName: z.string().describe('Name of the table to delete'),
   },
-  async ({ api_key, table_name }) => {
+  withUsageTracking('delete-table', async ({ apiKey, tableName }) => {
     try {
-      const actualApiKey = getApiKey(api_key);
-      const response = await fetch(`${API_BASE_URL}/api/database/tables/${table_name}`, {
+      const actualApiKey = getApiKey(apiKey);
+      const response = await fetch(`${API_BASE_URL}/api/database/tables/${tableName}`, {
         method: 'DELETE',
         headers: {
           'x-api-key': actualApiKey,
-          'Content-Type': 'application/json'
-        }
+          'Content-Type': 'application/json',
+        },
       });
 
       const result = await handleApiResponse(response);
-      
+
       return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: formatSuccessMessage('Table deleted', result)
-        }]
+        content: [
+          {
+            type: 'text',
+            text: formatSuccessMessage('Table deleted', result),
+          },
+        ],
       });
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
+      const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
       return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: `Error deleting table: ${errMsg}`
-        }],
-        isError: true
+        content: [
+          {
+            type: 'text',
+            text: `Error deleting table: ${errMsg}`,
+          },
+        ],
+        isError: true,
       });
     }
-  }
+  })
 );
 
 server.tool(
-  "modify-table",
-  "Alters table schema - add, drop, or rename columns",
+  'modify-table',
+  'Alters table schema - add, drop, or rename columns',
   {
-    api_key: z.string().optional().describe("API key for authentication (optional if provided via --api_key)"),
-    table_name: z.string().describe("Name of the table to modify"),
-    add_columns: z.array(z.object({
-      name: z.string().describe("Column name"),
-      type: z.enum(COLUMN_TYPES).describe("Column type"),
-      is_unique: z.boolean().describe("Whether the column is unique"),
-      nullable: z.boolean().describe("Whether the column allows NULL values"),
-      default_value: z.string().optional().describe("Default value for the column"),
-      foreign_key: z.object({
-        reference_table: z.string().describe("Name of the foreign table"),
-        reference_column: z.string().describe("Name of the foreign column"),
-        on_delete: z.enum(ON_DELETE_ACTIONS).describe("ON DELETE action"),
-        on_update: z.enum(ON_UPDATE_ACTIONS).describe("ON UPDATE action")
-      }).optional().describe("Foreign key information")
-    })).optional().describe("Columns to add to the table"),
-    drop_columns: z.array(z.object({
-      name: z.string().describe("Name of column to drop")
-    })).optional().describe("Columns to drop from the table"),
-    rename_columns: z.record(z.string()).optional().describe("Object mapping old column names to new names"),
-    add_fkey_columns: z.array(z.object({
-      name: z.string().describe("Name of existing column to add foreign key to"),
-      foreign_key: z.object({
-        reference_table: z.string().describe("Name of the foreign table"),
-        reference_column: z.string().describe("Name of the foreign column"),
-        on_delete: z.enum(ON_DELETE_ACTIONS).describe("ON DELETE action"),
-        on_update: z.enum(ON_UPDATE_ACTIONS).describe("ON UPDATE action")
-      }).describe("Foreign key constraint details")
-    })).optional().describe("Foreign key constraints to add to existing columns"),
-    drop_fkey_columns: z.array(z.object({
-      name: z.string().describe("Name of column to remove foreign key from")
-    })).optional().describe("Foreign key constraints to remove from columns")
+    apiKey: z
+      .string()
+      .optional()
+      .describe('API key for authentication (optional if provided via --api_key)'),
+    tableName: z.string().describe('Name of the table to modify'),
+    ...updateTableSchemaRequestSchema.shape,
   },
-  async ({ api_key, table_name, add_columns, drop_columns, rename_columns, add_fkey_columns, drop_fkey_columns }) => {
-    try {
-      const actualApiKey = getApiKey(api_key);
-      const body: any = {};
-      
-      // Preprocess add_columns to format default values
-      if (add_columns) {
-        body.add_columns = preprocessColumnDefaults(add_columns);
+  withUsageTracking(
+    'modify-table',
+    async ({
+      apiKey,
+      tableName,
+      addColumns,
+      dropColumns,
+      updateColumns,
+      addForeignKeys,
+      dropForeignKeys,
+      renameTable,
+    }) => {
+      try {
+        const actualApiKey = getApiKey(apiKey);
+        const requestBody: UpdateTableSchemaRequest = {};
+
+        // Preprocess addColumns to format default values
+        if (addColumns) {
+          requestBody.addColumns = preprocessColumnDefaults(addColumns);
+        }
+
+        if (dropColumns) {
+          requestBody.dropColumns = dropColumns;
+        }
+        if (updateColumns) {
+          requestBody.updateColumns = updateColumns;
+        }
+        if (addForeignKeys) {
+          requestBody.addForeignKeys = addForeignKeys;
+        }
+        if (dropForeignKeys) {
+          requestBody.dropForeignKeys = dropForeignKeys;
+        }
+        if (renameTable) {
+          requestBody.renameTable = renameTable;
+        }
+
+        const response = await fetch(`${API_BASE_URL}/api/database/tables/${tableName}/schema`, {
+          method: 'PATCH',
+          headers: {
+            'x-api-key': actualApiKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        const result = await handleApiResponse(response);
+
+        return await addBackgroundContext({
+          content: [
+            {
+              type: 'text',
+              text: formatSuccessMessage('Table modified', result),
+            },
+          ],
+        });
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+        return await addBackgroundContext({
+          content: [
+            {
+              type: 'text',
+              text: `Error modifying table: ${errMsg}`,
+            },
+          ],
+          isError: true,
+        });
       }
-      
-      if (drop_columns) body.drop_columns = drop_columns;
-      if (rename_columns) body.rename_columns = rename_columns;
-      if (add_fkey_columns) body.add_fkey_columns = add_fkey_columns;
-      if (drop_fkey_columns) body.drop_fkey_columns = drop_fkey_columns;
-
-      const response = await fetch(`${API_BASE_URL}/api/database/tables/${table_name}`, {
-        method: 'PATCH',
-        headers: {
-          'x-api-key': actualApiKey,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body)
-      });
-
-      const result = await handleApiResponse(response);
-      
-      return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: formatSuccessMessage('Table modified', result)
-        }]
-      });
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
-      return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: `Error modifying table: ${errMsg}`
-        }],
-        isError: true
-      });
     }
-  }
+  )
 );
+*/
 
 // Get table schema
 server.tool(
-  "get-table-schema",
-  "Returns the schema of a specific table",
+  'get-table-schema',
+  'Returns the schema of a specific table',
   {
-    api_key: z.string().optional().describe("API key for authentication (optional if provided via --api_key)"),
-    table_name: z.string().describe("Name of the table")
+    apiKey: z
+      .string()
+      .optional()
+      .describe('API key for authentication (optional if provided via --api_key)'),
+    tableName: z.string().describe('Name of the table'),
   },
-  async ({ api_key, table_name }) => {
+  withUsageTracking('get-table-schema', async ({ apiKey, tableName }) => {
     try {
-      const actualApiKey = getApiKey(api_key);
-      const response = await fetch(`${API_BASE_URL}/api/database/tables/${table_name}/schema`, {
+      const actualApiKey = getApiKey(apiKey);
+      const response = await fetch(`${API_BASE_URL}/api/metadata/${tableName}`, {
         method: 'GET',
         headers: {
-          'x-api-key': actualApiKey
-        }
+          'x-api-key': actualApiKey,
+        },
       });
 
       const result = await handleApiResponse(response);
-      
+
       return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: formatSuccessMessage('Schema retrieved', result)
-        }]
+        content: [
+          {
+            type: 'text',
+            text: formatSuccessMessage('Schema retrieved', result),
+          },
+        ],
       });
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
+      const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
       return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: `Error getting table schema: ${errMsg}`
-        }],
-        isError: true
+        content: [
+          {
+            type: 'text',
+            text: `Error getting table schema: ${errMsg}`,
+          },
+        ],
+        isError: true,
       });
     }
-  }
+  })
 );
 
 server.tool(
-  "get-backend-metadata",
-  "Index all backend metadata",
+  'get-backend-metadata',
+  'Index all backend metadata',
   {
-    api_key: z.string().optional().describe("API key for authentication (optional if provided via --api_key)")
+    apiKey: z
+      .string()
+      .optional()
+      .describe('API key for authentication (optional if provided via --api_key)'),
   },
-  async ({ api_key }) => {
+  withUsageTracking('get-backend-metadata', async ({ apiKey }) => {
     try {
-      const actualApiKey = getApiKey(api_key);
-      const response = await fetch(`${API_BASE_URL}/api/metadata`, {
+      const actualApiKey = getApiKey(apiKey);
+      const response = await fetch(`${API_BASE_URL}/api/metadata?mcp=true`, {
         method: 'GET',
         headers: {
-          'x-api-key': actualApiKey
-        }
+          'x-api-key': actualApiKey,
+        },
       });
 
       const metadata = await handleApiResponse(response);
-      
+
       return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: `Backend metadata:\n\n${JSON.stringify(metadata, null, 2)}`
-        }]
+        content: [
+          {
+            type: 'text',
+            text: `Backend metadata:\n\n${JSON.stringify(metadata, null, 2)}`,
+          },
+        ],
       });
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
+      const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
       return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: `Error retrieving backend metadata: ${errMsg}`
-        }],
-        isError: true
+        content: [
+          {
+            type: 'text',
+            text: `Error retrieving backend metadata: ${errMsg}`,
+          },
+        ],
+        isError: true,
       });
     }
-  }
+  })
+);
+
+// Execute raw SQL query
+server.tool(
+  'run-raw-sql',
+  'Execute raw SQL query with optional parameters. Admin access required. Use with caution as it can modify data directly.',
+  {
+    apiKey: z
+      .string()
+      .optional()
+      .describe('API key for authentication (optional if provided via --api_key)'),
+    ...rawSQLRequestSchema.shape,
+  },
+  withUsageTracking('run-raw-sql', async ({ apiKey, query, params }) => {
+    try {
+      const actualApiKey = getApiKey(apiKey);
+
+      const requestBody: RawSQLRequest = {
+        query,
+        params: params || [],
+      };
+
+      const response = await fetch(`${API_BASE_URL}/api/database/advance/rawsql`, {
+        method: 'POST',
+        headers: {
+          'x-api-key': actualApiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      const result = await handleApiResponse(response);
+
+      return await addBackgroundContext({
+        content: [
+          {
+            type: 'text',
+            text: formatSuccessMessage('SQL query executed', result),
+          },
+        ],
+      });
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+      return await addBackgroundContext({
+        content: [
+          {
+            type: 'text',
+            text: `Error executing SQL query: ${errMsg}`,
+          },
+        ],
+        isError: true,
+      });
+    }
+  })
 );
 
 // --------------------------------------------------
@@ -601,125 +625,385 @@ server.tool(
 
 // Create storage bucket
 server.tool(
-  "create-bucket",
-  "Create new storage bucket",
+  'create-bucket',
+  'Create new storage bucket',
   {
-    api_key: z.string().optional().describe("API key for authentication (optional if provided via --api_key)"),
-    bucket_name: z.string().describe("Name of the bucket to create"),
-    public: z.boolean().optional().describe("Whether the bucket should be public (optional)")
+    apiKey: z
+      .string()
+      .optional()
+      .describe('API key for authentication (optional if provided via --api_key)'),
+    ...createBucketRequestSchema.shape,
   },
-  async ({ api_key, bucket_name }) => {
+  withUsageTracking('create-bucket', async ({ apiKey, bucketName, isPublic }) => {
     try {
-      const actualApiKey = getApiKey(api_key);
+      const actualApiKey = getApiKey(apiKey);
       const response = await fetch(`${API_BASE_URL}/api/storage/buckets`, {
         method: 'POST',
         headers: {
           'x-api-key': actualApiKey,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ bucket: bucket_name })
+        body: JSON.stringify({ bucketName, isPublic } as CreateBucketRequest),
       });
 
       const result = await handleApiResponse(response);
-      
+
       return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: formatSuccessMessage('Bucket created', result)
-        }]
+        content: [
+          {
+            type: 'text',
+            text: formatSuccessMessage('Bucket created', result),
+          },
+        ],
       });
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
+      const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
       return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: `Error creating bucket: ${errMsg}`
-        }],
-        isError: true
+        content: [
+          {
+            type: 'text',
+            text: `Error creating bucket: ${errMsg}`,
+          },
+        ],
+        isError: true,
       });
     }
-  }
+  })
 );
 
 // List storage buckets
 server.tool(
-  "list-buckets",
-  "Lists all storage buckets",
+  'list-buckets',
+  'Lists all storage buckets',
   {},
-  async () => {
+  withUsageTracking('list-buckets', async () => {
     try {
       // This endpoint doesn't require authentication in the current implementation
       const response = await fetch(`${API_BASE_URL}/api/storage/buckets`, {
         method: 'GET',
         headers: {
-          'x-api-key': getApiKey() // Still need API key for protected endpoint
-        }
+          'x-api-key': getApiKey(), // Still need API key for protected endpoint
+        },
       });
 
       const result = await handleApiResponse(response);
-      
+
       return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: formatSuccessMessage('Buckets retrieved', result)
-        }]
+        content: [
+          {
+            type: 'text',
+            text: formatSuccessMessage('Buckets retrieved', result),
+          },
+        ],
       });
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
+      const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
       return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: `Error listing buckets: ${errMsg}`
-        }],
-        isError: true
+        content: [
+          {
+            type: 'text',
+            text: `Error listing buckets: ${errMsg}`,
+          },
+        ],
+        isError: true,
       });
     }
-  }
+  })
 );
 
 // Delete storage bucket
 server.tool(
-  "delete-bucket",
-  "Deletes a storage bucket",
+  'delete-bucket',
+  'Deletes a storage bucket',
   {
-    api_key: z.string().optional().describe("API key for authentication (optional if provided via --api_key)"),
-    bucket_name: z.string().describe("Name of the bucket to delete")
+    apiKey: z
+      .string()
+      .optional()
+      .describe('API key for authentication (optional if provided via --api_key)'),
+    bucketName: z.string().describe('Name of the bucket to delete'),
   },
-  async ({ api_key, bucket_name }) => {
+  withUsageTracking('delete-bucket', async ({ apiKey, bucketName }) => {
     try {
-      const actualApiKey = getApiKey(api_key);
-      const response = await fetch(`${API_BASE_URL}/api/storage/${bucket_name}`, {
+      const actualApiKey = getApiKey(apiKey);
+      const response = await fetch(`${API_BASE_URL}/api/storage/buckets/${bucketName}`, {
         method: 'DELETE',
         headers: {
-          'x-api-key': actualApiKey
-        }
+          'x-api-key': actualApiKey,
+        },
       });
 
       const result = await handleApiResponse(response);
-      
+
       return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: formatSuccessMessage('Bucket deleted', result)
-        }]
+        content: [
+          {
+            type: 'text',
+            text: formatSuccessMessage('Bucket deleted', result),
+          },
+        ],
       });
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Unknown error occurred";
+      const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
       return await addBackgroundContext({
-        content: [{
-          type: "text",
-          text: `Error deleting bucket: ${errMsg}`
-        }],
-        isError: true
+        content: [
+          {
+            type: 'text',
+            text: `Error deleting bucket: ${errMsg}`,
+          },
+        ],
+        isError: true,
       });
     }
-  }
+  })
+);
+
+// Create edge function
+server.tool(
+  'create-function',
+  'Create a new edge function that runs in Deno runtime. The code must be written to a file first for version control',
+  {
+    slug: z
+      .string()
+      .regex(/^[a-zA-Z0-9_-]+$/, 'Slug must be alphanumeric with hyphens or underscores only')
+      .describe(
+        'URL-friendly identifier (alphanumeric, hyphens, underscores only). Example: "my-calculator"'
+      ),
+    name: z.string().describe('Function display name. Example: "Calculator Function"'),
+    codeFile: z
+      .string()
+      .describe(
+        'Path to JavaScript file containing the function code. Must export: module.exports = async function(request) { return new Response(...) }'
+      ),
+    description: z.string().optional().describe('Description of what the function does'),
+    active: z
+      .boolean()
+      .optional()
+      .describe('Set to true to deploy immediately, false for draft mode'),
+  },
+  withUsageTracking('create-function', async (args) => {
+    try {
+      // Read code from file
+      let code: string;
+      try {
+        code = await fs.readFile(args.codeFile, 'utf-8');
+      } catch (fileError) {
+        throw new Error(
+          `Failed to read code file '${args.codeFile}': ${fileError instanceof Error ? fileError.message : 'Unknown error'}`
+        );
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/functions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': getApiKey(),
+        },
+        body: JSON.stringify({
+          slug: args.slug,
+          name: args.name,
+          code: code,
+          description: args.description || '',
+          status: args.active ? 'active' : 'draft',
+        }),
+      });
+
+      const result = await handleApiResponse(response);
+
+      return await addBackgroundContext({
+        content: [
+          {
+            type: 'text',
+            text: formatSuccessMessage(
+              `Edge function '${args.slug}' created successfully from ${args.codeFile}`,
+              result
+            ),
+          },
+        ],
+      });
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+      return await addBackgroundContext({
+        content: [
+          {
+            type: 'text',
+            text: `Error creating function: ${errMsg}`,
+          },
+        ],
+        isError: true,
+      });
+    }
+  })
+);
+
+// Get specific edge function
+server.tool(
+  'get-function',
+  'Get details of a specific edge function including its code',
+  {
+    slug: z.string().describe('The slug identifier of the function'),
+  },
+  withUsageTracking('get-function', async (args) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/functions/${args.slug}`, {
+        method: 'GET',
+        headers: {
+          'x-api-key': getApiKey(),
+        },
+      });
+
+      const result = await handleApiResponse(response);
+
+      return await addBackgroundContext({
+        content: [
+          {
+            type: 'text',
+            text: formatSuccessMessage(`Edge function '${args.slug}' details`, result),
+          },
+        ],
+      });
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+      return await addBackgroundContext({
+        content: [
+          {
+            type: 'text',
+            text: `Error getting function: ${errMsg}`,
+          },
+        ],
+        isError: true,
+      });
+    }
+  })
+);
+
+// Update edge function
+server.tool(
+  'update-function',
+  'Update an existing edge function code or metadata',
+  {
+    slug: z.string().describe('The slug identifier of the function to update'),
+    name: z.string().optional().describe('New display name'),
+    codeFile: z
+      .string()
+      .optional()
+      .describe(
+        'Path to JavaScript file containing the new function code. Must export: module.exports = async function(request) { return new Response(...) }'
+      ),
+    description: z.string().optional().describe('New description'),
+    status: z
+      .string()
+      .optional()
+      .describe('Function status: "draft" (not deployed), "active" (deployed), or "error"'),
+  },
+  withUsageTracking('update-function', async (args) => {
+    try {
+      const updateData: any = {};
+      if (args.name) {
+        updateData.name = args.name;
+      }
+
+      // Read code from file if provided
+      if (args.codeFile) {
+        try {
+          updateData.code = await fs.readFile(args.codeFile, 'utf-8');
+        } catch (fileError) {
+          throw new Error(
+            `Failed to read code file '${args.codeFile}': ${fileError instanceof Error ? fileError.message : 'Unknown error'}`
+          );
+        }
+      }
+
+      if (args.description !== undefined) {
+        updateData.description = args.description;
+      }
+      if (args.status) {
+        updateData.status = args.status;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/functions/${args.slug}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': getApiKey(),
+        },
+        body: JSON.stringify(updateData),
+      });
+
+      const result = await handleApiResponse(response);
+
+      const fileInfo = args.codeFile ? ` from ${args.codeFile}` : '';
+
+      return await addBackgroundContext({
+        content: [
+          {
+            type: 'text',
+            text: formatSuccessMessage(
+              `Edge function '${args.slug}' updated successfully${fileInfo}`,
+              result
+            ),
+          },
+        ],
+      });
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+      return await addBackgroundContext({
+        content: [
+          {
+            type: 'text',
+            text: `Error updating function: ${errMsg}`,
+          },
+        ],
+        isError: true,
+      });
+    }
+  })
+);
+
+// Delete edge function
+server.tool(
+  'delete-function',
+  'Delete an edge function permanently',
+  {
+    slug: z.string().describe('The slug identifier of the function to delete'),
+  },
+  withUsageTracking('delete-function', async (args) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/functions/${args.slug}`, {
+        method: 'DELETE',
+        headers: {
+          'x-api-key': getApiKey(),
+        },
+      });
+
+      const result = await handleApiResponse(response);
+
+      return await addBackgroundContext({
+        content: [
+          {
+            type: 'text',
+            text: formatSuccessMessage(`Edge function '${args.slug}' deleted successfully`, result),
+          },
+        ],
+      });
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+      return await addBackgroundContext({
+        content: [
+          {
+            type: 'text',
+            text: `Error deleting function: ${errMsg}`,
+          },
+        ],
+        isError: true,
+      });
+    }
+  })
 );
 
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Insforge MCP server started");
+  console.error('Insforge MCP server started');
 }
 
 main().catch(console.error);
