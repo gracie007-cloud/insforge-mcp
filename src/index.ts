@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import fetch from 'node-fetch';
+import FormData from 'form-data';
 import { program } from 'commander';
 import { promises as fs } from 'fs';
 import { handleApiResponse, formatSuccessMessage } from './response-handler.js';
@@ -16,6 +17,8 @@ import {
   createBucketRequestSchema,
   rawSQLRequestSchema,
   RawSQLRequest,
+  bulkUpsertRequestSchema,
+  BulkUpsertRequest,
 } from '@insforge/shared-schemas';
 
 // Parse command line arguments
@@ -612,6 +615,79 @@ server.tool(
           {
             type: 'text',
             text: `Error executing SQL query: ${errMsg}`,
+          },
+        ],
+        isError: true,
+      });
+    }
+  })
+);
+
+// Bulk upsert from CSV/JSON file
+server.tool(
+  'bulk-upsert',
+  'Bulk insert or update data from CSV or JSON file. Supports upsert operations with a unique key.',
+  {
+    apiKey: z
+      .string()
+      .optional()
+      .describe('API key for authentication (optional if provided via --api_key)'),
+    ...bulkUpsertRequestSchema.shape,
+    filePath: z.string().describe('Path to CSV or JSON file containing data to import'),
+  },
+  withUsageTracking('bulk-upsert', async ({ apiKey, table, filePath, upsertKey }) => {
+    try {
+      const actualApiKey = getApiKey(apiKey);
+      
+      // Read the file
+      const fileBuffer = await fs.readFile(filePath);
+      const fileName = filePath.split('/').pop() || 'data.csv';
+      
+      // Create form data for multipart upload
+      const formData = new FormData();
+      formData.append('file', fileBuffer, fileName);
+      formData.append('table', table);
+      if (upsertKey) {
+        formData.append('upsertKey', upsertKey);
+      }
+      
+      const response = await fetch(`${API_BASE_URL}/api/database/advance/bulk-upsert`, {
+        method: 'POST',
+        headers: {
+          'x-api-key': actualApiKey,
+          ...formData.getHeaders(),
+        },
+        body: formData,
+      });
+      
+      const result = await handleApiResponse(response);
+      
+      // Format the result message
+      const message = result.success 
+        ? `Successfully processed ${result.rowsAffected} of ${result.totalRecords} records into table "${result.table}"`
+        : result.message || 'Bulk upsert operation completed';
+      
+      return await addBackgroundContext({
+        content: [
+          {
+            type: 'text',
+            text: formatSuccessMessage('Bulk upsert completed', {
+              message,
+              table: result.table,
+              rowsAffected: result.rowsAffected,
+              totalRecords: result.totalRecords,
+              errors: result.errors,
+            }),
+          },
+        ],
+      });
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+      return await addBackgroundContext({
+        content: [
+          {
+            type: 'text',
+            text: `Error performing bulk upsert: ${errMsg}`,
           },
         ],
         isError: true,
