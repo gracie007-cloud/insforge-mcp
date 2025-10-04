@@ -1,6 +1,6 @@
 <div align="center">
-  <a href="https://insforge.com">
-    <img src="logo.svg" alt="Insforge Logo" width="400">
+  <a href="https://insforge.dev">
+    <img src="banner.png" alt="Insforge Banner">
   </a>
 </div>
 
@@ -20,8 +20,60 @@ Please visit the [main Insforge repository](https://github.com/InsForge/insforge
 
 ## 🚀 Quick Start
 
+### Automated Installation (Recommended)
+
+Use the InsForge installer to automatically configure MCP for your client:
+
 ```bash
-npm install -g @insforge/insforge-mcp
+# Claude Code
+npx @insforge/install --client claude-code --env API_KEY=your_api_key --env API_BASE_URL=http://localhost:7130
+
+# Cursor
+npx @insforge/install --client cursor --env API_KEY=your_api_key --env API_BASE_URL=http://localhost:7130
+
+# Windsurf
+npx @insforge/install --client windsurf --env API_KEY=your_api_key --env API_BASE_URL=http://localhost:7130
+
+# Cline
+npx @insforge/install --client cline --env API_KEY=your_api_key --env API_BASE_URL=http://localhost:7130
+
+# Roo Code
+npx @insforge/install --client roocode --env API_KEY=your_api_key --env API_BASE_URL=http://localhost:7130
+
+# Codex
+npx @insforge/install --client codex --env API_KEY=your_api_key --env API_BASE_URL=http://localhost:7130
+
+# Trae
+npx @insforge/install --client trae --env API_KEY=your_api_key --env API_BASE_URL=http://localhost:7130
+
+# Install dev version for testing
+npx @insforge/install --client cursor --env API_KEY=your_api_key --env API_BASE_URL=http://localhost:7130 --dev
+```
+
+Replace:
+- `your_api_key` with your InsForge API key
+- `http://localhost:7130` with your InsForge instance URL (optional, defaults to localhost:7130)
+
+### Manual Installation
+
+If you prefer to manually configure your MCP client, add this to your MCP settings file:
+
+```json
+{
+  "mcpServers": {
+    "insforge": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@insforge/mcp@latest"
+      ],
+      "env": {
+        "API_KEY": "your_api_key",
+        "API_BASE_URL": "http://localhost:7130"
+      }
+    }
+  }
+}
 ```
 
 For detailed setup instructions, see the [MCP Integration Guide](https://github.com/InsForge/insforge#mcp-integration-setup) in the main repository.
