@@ -76,7 +76,7 @@ If you prefer to manually configure your MCP client, add this to your MCP settin
 }
 ```
 
-For detailed setup instructions, see the [MCP Integration Guide](https://github.com/InsForge/insforge#mcp-integration-setup) in the main repository.
+For detailed setup instructions, see the [Insforge Documentation](https://docs.insforge.dev).
 
 ## 📄 License
 
