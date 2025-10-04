@@ -39,10 +39,6 @@ npx @insforge/install --client cline --env API_KEY=your_api_key --env API_BASE_U
 
 # Roo Code
 npx @insforge/install --client roocode --env API_KEY=your_api_key --env API_BASE_URL=http://localhost:7130
-
-# Codex
-npx @insforge/install --client codex --env API_KEY=your_api_key --env API_BASE_URL=http://localhost:7130
-
 # Trae
 npx @insforge/install --client trae --env API_KEY=your_api_key --env API_BASE_URL=http://localhost:7130
 
