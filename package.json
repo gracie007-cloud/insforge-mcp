@@ -21,8 +21,17 @@
   ],
   "author": "Insforge",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/InsForge/insforge-mcp.git"
+  },
+  "homepage": "https://github.com/InsForge/insforge-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/InsForge/insforge-mcp/issues"
+  },
   "files": [
-    "dist"
+    "dist",
+    "mcp.json"
   ],
   "dependencies": {
     "@insforge/shared-schemas": "^1.1.1",
