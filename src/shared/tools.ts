@@ -766,12 +766,22 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
         const queryParams = new URLSearchParams();
         if (limit) queryParams.append('limit', limit.toString());
 
-        const response = await fetch(`${API_BASE_URL}/api/logs/analytics/${source}?${queryParams}`, {
+        let response = await fetch(`${API_BASE_URL}/api/logs/${source}?${queryParams}`, {
           method: 'GET',
           headers: {
             'x-api-key': actualApiKey,
           },
         });
+
+        // Fallback to legacy endpoint if 404
+        if (response.status === 404) {
+          response = await fetch(`${API_BASE_URL}/api/logs/analytics/${source}?${queryParams}`, {
+            method: 'GET',
+            headers: {
+              'x-api-key': actualApiKey,
+            },
+          });
+        }
 
         const result = await handleApiResponse(response);
 
