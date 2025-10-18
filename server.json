@@ -1,0 +1,17 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+  "name": "io.github.insforge/insforge-mcp",
+  "title": "Insforge",
+  "description": "MCP server for Insforge BaaS - database, auth, storage, edge functions, and container logs",
+  "version": "1.1.5",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@insforge/mcp",
+      "version": "1.1.5",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

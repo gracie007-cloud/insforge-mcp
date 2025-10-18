@@ -119,6 +119,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
     return response;
   };
 
+  
   // --------------------------------------------------
   // INSTRUCTION TOOLS
   // --------------------------------------------------
