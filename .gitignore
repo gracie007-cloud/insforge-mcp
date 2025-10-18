@@ -40,3 +40,9 @@ coverage/
 tmp/
 temp/
 *.tmp
+
+# MCP Registry tokens (local authentication)
+.mcpregistry_*
+
+# Claude Code local settings
+.claude/settings.local.json

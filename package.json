@@ -1,7 +1,8 @@
 {
   "name": "@insforge/mcp",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "MCP (Model Context Protocol) server for Insforge backend-as-a-service",
+  "mcpName": "io.github.insforge/insforge-mcp",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -31,7 +32,8 @@
   },
   "files": [
     "dist",
-    "mcp.json"
+    "mcp.json",
+    "server.json"
   ],
   "dependencies": {
     "@insforge/shared-schemas": "^1.1.1",
