@@ -2,7 +2,7 @@
   "name": "@insforge/mcp",
   "version": "1.1.6",
   "description": "MCP (Model Context Protocol) server for Insforge backend-as-a-service",
-  "mcpName": "io.github.insforge/insforge-mcp",
+  "mcpName": "io.github.InsForge/insforge-mcp",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
