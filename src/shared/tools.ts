@@ -59,17 +59,13 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
     };
   }
 
-  // Helper function to get API key
-  const getApiKey = (toolApiKey?: string): string => {
-    if (GLOBAL_API_KEY) {
-      return GLOBAL_API_KEY;
+  // Helper function to get API key - always uses global API key
+  // The optional parameter is kept for backward compatibility but ignored
+  const getApiKey = (_toolApiKey?: string): string => {
+    if (!GLOBAL_API_KEY) {
+      throw new Error('API key is required. Pass --api_key when starting the MCP server.');
     }
-    if (toolApiKey) {
-      return toolApiKey;
-    }
-    throw new Error(
-      'API key is required. Either pass --api_key as command line argument or provide api_key in tool calls.'
-    );
+    return GLOBAL_API_KEY;
   };
 
   // Helper function to fetch documentation from backend
@@ -98,26 +94,27 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
   };
 
   // Helper function to fetch insforge-project.md content
-  const fetchInsforgeInstructionsContext = async (): Promise<string | null> => {
-    try {
-      return await fetchDocumentation('instructions');
-    } catch (error) {
-      console.error('Failed to fetch insforge-instructions.md:', error);
-      return null;
-    }
-  };
+  // const fetchInsforgeInstructionsContext = async (): Promise<string | null> => {
+  //   try {
+  //     return await fetchDocumentation('instructions');
+  //   } catch (error) {
+  //     console.error('Failed to fetch insforge-instructions.md:', error);
+  //     return null;
+  //   }
+  // };
 
   // Helper function to add background context to responses
-  const addBackgroundContext = async (response: any): Promise<any> => {
-    const context = await fetchInsforgeInstructionsContext();
-    if (context && response.content && Array.isArray(response.content)) {
-      response.content.push({
-        type: 'text',
-        text: `\n\n---\n🔧 INSFORGE DEVELOPMENT RULES (Auto-loaded):\n${context}`,
-      });
-    }
-    return response;
-  };
+  // DISABLED: No longer appending background context to every response
+  // const addBackgroundContext = async (response: any): Promise<any> => {
+  //   const context = await fetchInsforgeInstructionsContext();
+  //   if (context && response.content && Array.isArray(response.content)) {
+  //     response.content.push({
+  //       type: 'text',
+  //       text: `\n\n---\n🔧 INSFORGE DEVELOPMENT RULES (Auto-loaded):\n${context}`,
+  //     });
+  //   }
+  //   return response;
+  // };
 
   
   // --------------------------------------------------
@@ -125,13 +122,19 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
   // --------------------------------------------------
 
   server.tool(
-    'get-instructions',
-    'Instruction Essential backend setup tool. <critical>MANDATORY: You MUST use this tool FIRST before attempting any backend operations. Contains required API endpoints, authentication details, and setup instructions.</critical>',
-    {},
-    withUsageTracking('get-instructions', async () => {
+    'fetch-docs',
+    'Fetch Insforge documentation. Use "instructions" for essential backend setup (MANDATORY FIRST), or select specific SDK docs for database, auth, storage, functions, or AI integration.',
+    {
+      docType: z
+        .enum(['instructions', 'db-sdk', 'auth-sdk', 'storage-sdk', 'functions-sdk', 'ai-integration-sdk'])
+        .describe(
+          'Documentation type: "instructions" (essential backend setup - use FIRST), "db-sdk" (database operations), "auth-sdk" (authentication), "storage-sdk" (file storage), "functions-sdk" (edge functions), "ai-integration-sdk" (AI features)'
+        ),
+    },
+    withUsageTracking('fetch-docs', async ({ docType }) => {
       try {
-        const content = await fetchDocumentation('instructions');
-        const response = {
+        const content = await fetchDocumentation(docType);
+        return {
           content: [
             {
               type: 'text',
@@ -139,33 +142,77 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
             },
           ],
         };
-        return await addBackgroundContext(response);
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        const errorResponse = {
-          content: [{ type: 'text', text: `Error: ${errMsg}` }],
+        return {
+          content: [{ type: 'text', text: `Error fetching ${docType} documentation: ${errMsg}` }],
         };
-        return await addBackgroundContext(errorResponse);
       }
     })
   );
 
+  // DISABLED: API key is set globally via --api_key flag, no need to expose it as a tool
+  // server.tool(
+  //   'get-api-key',
+  //   'Retrieves the API key for the Insforge OSS backend. This is used to authenticate all requests to the backend.',
+  //   {},
+  //   async () => {
+  //     try {
+  //       return {
+  //         content: [{ type: 'text', text: `API key: ${getApiKey()}` }],
+  //       };
+  //     } catch (error) {
+  //       const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+  //       return {
+  //         content: [{ type: 'text', text: `Error: ${errMsg}` }],
+  //       };
+  //     }
+  //   }
+  // );
+
   server.tool(
-    'get-api-key',
-    'Retrieves the API key for the Insforge OSS backend. This is used to authenticate all requests to the backend.',
-    {},
-    async () => {
+    'get-anon-key',
+    'Generate an anonymous JWT token that never expires. Requires admin API key. Use this for client-side applications that need public access.',
+    {
+      apiKey: z
+        .string()
+        .optional()
+        .describe('API key for authentication (optional if provided via --api_key)'),
+    },
+    withUsageTracking('get-anon-key', async ({ apiKey }) => {
       try {
-        return await addBackgroundContext({
-          content: [{ type: 'text', text: `API key: ${getApiKey()}` }],
+        const actualApiKey = getApiKey(apiKey);
+        const response = await fetch(`${API_BASE_URL}/api/auth/tokens/anon`, {
+          method: 'POST',
+          headers: {
+            'x-api-key': actualApiKey,
+            'Content-Type': 'application/json',
+          },
         });
+
+        const result = await handleApiResponse(response);
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: formatSuccessMessage('Anonymous token generated', result),
+            },
+          ],
+        };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return await addBackgroundContext({
-          content: [{ type: 'text', text: `Error: ${errMsg}` }],
-        });
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Error generating anonymous token: ${errMsg}`,
+            },
+          ],
+          isError: true,
+        };
       }
-    }
+    })
   );
 
   // --------------------------------------------------
@@ -194,17 +241,17 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
         const result = await handleApiResponse(response);
 
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
               text: formatSuccessMessage('Schema retrieved', result),
             },
           ],
-        });
+        };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
@@ -212,7 +259,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
             },
           ],
           isError: true,
-        });
+        };
       }
     })
   );
@@ -238,17 +285,17 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
         const metadata = await handleApiResponse(response);
 
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
               text: `Backend metadata:\n\n${JSON.stringify(metadata, null, 2)}`,
             },
           ],
-        });
+        };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
@@ -256,7 +303,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
             },
           ],
           isError: true,
-        });
+        };
       }
     })
   );
@@ -291,17 +338,17 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
         const result = await handleApiResponse(response);
 
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
               text: formatSuccessMessage('SQL query executed', result),
             },
           ],
-        });
+        };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
@@ -309,7 +356,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
             },
           ],
           isError: true,
-        });
+        };
       }
     })
   );
@@ -353,11 +400,11 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
         const result = await handleApiResponse(response);
         
         // Format the result message
-        const message = result.success 
+        const message = result.success
           ? `Successfully processed ${result.rowsAffected} of ${result.totalRecords} records into table "${result.table}"`
           : result.message || 'Bulk upsert operation completed';
-        
-        return await addBackgroundContext({
+
+        return {
           content: [
             {
               type: 'text',
@@ -370,10 +417,10 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
               }),
             },
           ],
-        });
+        };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
@@ -381,7 +428,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
             },
           ],
           isError: true,
-        });
+        };
       }
     })
   );
@@ -414,17 +461,17 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
         const result = await handleApiResponse(response);
 
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
               text: formatSuccessMessage('Bucket created', result),
             },
           ],
-        });
+        };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
@@ -432,7 +479,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
             },
           ],
           isError: true,
-        });
+        };
       }
     })
   );
@@ -452,17 +499,17 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
         const result = await handleApiResponse(response);
 
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
               text: formatSuccessMessage('Buckets retrieved', result),
             },
           ],
-        });
+        };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
@@ -470,7 +517,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
             },
           ],
           isError: true,
-        });
+        };
       }
     })
   );
@@ -497,17 +544,17 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
         const result = await handleApiResponse(response);
 
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
               text: formatSuccessMessage('Bucket deleted', result),
             },
           ],
-        });
+        };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
@@ -515,7 +562,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
             },
           ],
           isError: true,
-        });
+        };
       }
     })
   );
@@ -563,7 +610,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
         const result = await handleApiResponse(response);
 
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
@@ -573,10 +620,10 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
               ),
             },
           ],
-        });
+        };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
@@ -584,7 +631,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
             },
           ],
           isError: true,
-        });
+        };
       }
     })
   );
@@ -606,17 +653,17 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
         const result = await handleApiResponse(response);
 
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
               text: formatSuccessMessage(`Edge function '${args.slug}' details`, result),
             },
           ],
-        });
+        };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
@@ -624,7 +671,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
             },
           ],
           isError: true,
-        });
+        };
       }
     })
   );
@@ -679,7 +726,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
         const fileInfo = args.codeFile ? ` from ${args.codeFile}` : '';
 
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
@@ -689,10 +736,10 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
               ),
             },
           ],
-        });
+        };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
@@ -700,7 +747,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
             },
           ],
           isError: true,
-        });
+        };
       }
     })
   );
@@ -722,17 +769,17 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
         const result = await handleApiResponse(response);
 
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
               text: formatSuccessMessage(`Edge function '${args.slug}' deleted successfully`, result),
             },
           ],
-        });
+        };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
@@ -740,7 +787,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
             },
           ],
           isError: true,
-        });
+        };
       }
     })
   );
@@ -786,17 +833,17 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
         const result = await handleApiResponse(response);
 
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
               text: formatSuccessMessage(`Latest logs from ${source}`, result),
             },
           ],
-        });
+        };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
@@ -804,7 +851,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
             },
           ],
           isError: true,
-        });
+        };
       }
     })
   );
