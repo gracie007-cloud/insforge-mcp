@@ -201,6 +201,9 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
       if (result && typeof result === 'object' && 'content' in result) {
         let content = result.content;
+        // Replace all example/placeholder URLs with actual API_BASE_URL
+        // Handle URLs whether they're in backticks, quotes, or standalone
+        // Preserve paths after the domain by only replacing the base URL
         content = content.replace(/http:\/\/localhost:7130/g, API_BASE_URL);
         content = content.replace(/https:\/\/your-app\.region\.insforge\.app/g, API_BASE_URL);
         return content;
@@ -1048,17 +1051,17 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
         const result = await handleApiResponse(response);
 
         const action = id ? 'updated' : 'created';
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
               text: formatSuccessMessage(`Schedule '${name}' ${action} successfully`, result),
             },
           ],
-        });
+        };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
@@ -1066,7 +1069,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
             },
           ],
           isError: true,
-        });
+        };
       }
     })
   );
@@ -1216,17 +1219,17 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
         const result = await handleApiResponse(response);
 
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
               text: formatSuccessMessage(`Schedule ${scheduleId} deleted successfully`, result),
             },
           ],
-        });
+        };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return await addBackgroundContext({
+        return {
           content: [
             {
               type: 'text',
@@ -1234,7 +1237,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
             },
           ],
           isError: true,
-        });
+        };
       }
     })
   );
