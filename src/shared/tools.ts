@@ -505,8 +505,80 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
   );
 
   server.tool(
+    'download-template',
+    'Download a React starter template with InsForge integration. Creates a new "insforge-react" directory with React + TypeScript setup and pre-configured with your backend URL and anon key.',
+    {
+      frame: z
+        .enum(['react'])
+        .describe('Framework to use for the template (currently only React is supported)'),
+    },
+    withUsageTracking('download-template', async ({ frame }) => {
+      try {
+        // Get the anon key from backend
+        const response = await fetch(`${API_BASE_URL}/api/auth/tokens/anon`, {
+          method: 'POST',
+          headers: {
+            'x-api-key': getApiKey(),
+            'Content-Type': 'application/json',
+          },
+        });
+
+        const result = await handleApiResponse(response);
+        const anonKey = result.accessToken;
+
+        if (!anonKey) {
+          throw new Error('Failed to retrieve anon key from backend');
+        }
+
+        const targetDir = `insforge-${frame}`;
+        const command = `npx create-insforge-app insforge-${frame}  --frame ${frame} --base-url ${API_BASE_URL} --anon-key ${anonKey}`;
+
+        // Execute the npx command
+        const { stdout, stderr } = await execAsync(command, {
+          maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+        });
+
+        const output = stdout || stderr || 'Template downloaded successfully';
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: formatSuccessMessage(
+                `React template downloaded to ${targetDir}`,
+                {
+                  targetDir,
+                  baseUrl: API_BASE_URL,
+                  command,
+                  output: output.trim(),
+                  nextSteps: [
+                    `cd ${targetDir}`,
+                    `npm install`,
+                    `npm run dev`,
+                  ],
+                }
+              ),
+            },
+          ],
+        };
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Error downloading template: ${errMsg}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    })
+  );
+
+  server.tool(
     'bulk-upsert',
-    'Bulk insert or update data from CSV or JSON file. Supports upsert operations with a unique key.',
+    'Bulk insert or updallet data from CSV or JSON file. Supports upsert operations with a unique key.',
     {
       apiKey: z
         .string()
