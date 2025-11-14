@@ -536,10 +536,22 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
         }
 
         // Create temp directory for download
-        const tempDir = await fs.mkdtemp(`${tmpdir()}/insforge-`);
+        const tempDir = tmpdir();
         const targetDir = projectName || `insforge-${frame}`;
+        const templatePath = `${tempDir}/${targetDir}`;
 
-        console.error(`[download-template] Downloading to temp: ${tempDir}`);
+        console.error(`[download-template] Target path: ${templatePath}`);
+
+        // Check if template already exists in temp, remove it first
+        try {
+          const stats = await fs.stat(templatePath);
+          if (stats.isDirectory()) {
+            console.error(`[download-template] Removing existing template at ${templatePath}`);
+            await fs.rm(templatePath, { recursive: true, force: true });
+          }
+        } catch (error) {
+          // Directory doesn't exist, which is fine
+        }
 
         const command = `npx create-insforge-app ${targetDir} --frame ${frame} --base-url ${API_BASE_URL} --anon-key ${anonKey}`;
 
@@ -555,29 +567,22 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
           throw new Error(`Failed to download template: ${output}`);
         }
 
-        const templatePath = `${tempDir}/${targetDir}`;
-
         return {
           content: [
             {
               type: 'text',
-              text: formatSuccessMessage(
-                `React template downloaded to temporary directory`,
-                {
-                  projectName: targetDir,
-                  tempLocation: templatePath,
-                  baseUrl: API_BASE_URL,
-                  criticalNextStep: [
-                    `IMPORTANT: The template is in a temporary directory. Run this command to copy it to your current directory:`,
-                    ``,
-                    `cp -r ${templatePath}/* . && cp -r ${templatePath}/.* . 2>/dev/null || true`,
-                    ``,
-                    `Then proceed with:`,
-                    `npm install`,
-                    `npm run dev`,
-                  ],
-                }
-              ),
+              text: `✅ React template downloaded successfully
+
+📁 Template Location: ${templatePath}
+
+⚠️  IMPORTANT: The template is in a temporary directory and NOT in your current working directory.
+
+🔴 CRITICAL NEXT STEP REQUIRED:
+You MUST copy ALL files (INCLUDING HIDDEN FILES like .env, .gitignore, etc.) from the temporary directory to your current project directory.
+
+Copy all files from: ${templatePath}
+To: Your current project directory
+`,
             },
           ],
         };
