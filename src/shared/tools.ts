@@ -116,8 +116,12 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
    * Returns: -1 if v1 < v2, 0 if v1 === v2, 1 if v1 > v2
    */
   function compareVersions(v1: string, v2: string): number {
-    const parts1 = v1.split('.').map(Number);
-    const parts2 = v2.split('.').map(Number);
+    // Strip 'v' prefix if present
+    const clean1 = v1.replace(/^v/, '');
+    const clean2 = v2.replace(/^v/, '');
+
+    const parts1 = clean1.split('.').map(Number);
+    const parts2 = clean2.split('.').map(Number);
 
     for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
       const part1 = parts1[i] || 0;
