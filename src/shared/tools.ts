@@ -1357,6 +1357,6 @@ To: Your current project directory
   return {
     apiKey: GLOBAL_API_KEY,
     apiBaseUrl: API_BASE_URL,
-    toolCount: 17,
+    toolCount: 15,
   };
 }
