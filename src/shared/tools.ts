@@ -202,6 +202,11 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
         },
       });
 
+      // Check for 404 before processing response
+      if (response.status === 404) {
+        throw new Error('Documentation not found');
+      }
+
       const result = await handleApiResponse(response);
 
       if (result && typeof result === 'object' && 'content' in result) {
@@ -222,27 +227,38 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
   };
 
   // Helper function to fetch insforge-project.md content
-  // const fetchInsforgeInstructionsContext = async (): Promise<string | null> => {
-  //   try {
-  //     return await fetchDocumentation('instructions');
-  //   } catch (error) {
-  //     console.error('Failed to fetch insforge-instructions.md:', error);
-  //     return null;
-  //   }
-  // };
+  const fetchInsforgeInstructionsContext = async (): Promise<string | null> => {
+    try {
+      return await fetchDocumentation('instructions');
+    } catch (error) {
+      console.error('Failed to fetch insforge-instructions.md:', error);
+      return null;
+    }
+  };
 
   // Helper function to add background context to responses
-  // DISABLED: No longer appending background context to every response
-  // const addBackgroundContext = async (response: any): Promise<any> => {
-  //   const context = await fetchInsforgeInstructionsContext();
-  //   if (context && response.content && Array.isArray(response.content)) {
-  //     response.content.push({
-  //       type: 'text',
-  //       text: `\n\n---\n🔧 INSFORGE DEVELOPMENT RULES (Auto-loaded):\n${context}`,
-  //     });
-  //   }
-  //   return response;
-  // };
+  // Only enabled for backend versions < 1.7.0 (legacy support)
+  const addBackgroundContext = async <T extends { content: Array<{ type: 'text'; text: string }> }>(response: T): Promise<T> => {
+    try {
+      const currentVersion = await getBackendVersion();
+      const isLegacyVersion = compareVersions(currentVersion, '1.7.0') < 0;
+
+      // Only add context for versions before 1.7.0
+      if (isLegacyVersion) {
+        const context = await fetchInsforgeInstructionsContext();
+        if (context && response.content && Array.isArray(response.content)) {
+          response.content.push({
+            type: 'text' as const,
+            text: `\n\n---\n🔧 INSFORGE DEVELOPMENT RULES (Auto-loaded):\n${context}`,
+          });
+        }
+      }
+    } catch {
+      // If version check fails, skip background context (safer default)
+      console.warn('Could not determine backend version, skipping background context');
+    }
+    return response;
+  };
 
   
   // --------------------------------------------------
@@ -263,56 +279,34 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
       try {
         const content = await fetchDocumentation(docType);
 
-        return {
+        return await addBackgroundContext({
           content: [
             {
               type: 'text',
               text: content,
             },
           ],
-        };
+        });
       } catch (error) {
-        // If 404, fall back to instructions docs
-        if (error instanceof Error && error.message.includes('404')) {
-          try {
-            const instructionsContent = await fetchDocumentation('instructions');
-            return {
-              content: [{ type: 'text', text: instructionsContent }],
-            };
-          } catch (fallbackError) {
-            const fallbackErrMsg = fallbackError instanceof Error ? fallbackError.message : 'Unknown error occurred';
-            return {
-              content: [{ type: 'text', text: `Error fetching documentation: ${fallbackErrMsg}` }],
-            };
-          }
+        const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+
+        // Friendly error for not found (likely due to old backend version)
+        if (errMsg.includes('404') || errMsg.toLowerCase().includes('not found')) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Documentation for "${docType}" is not available. This is likely because your backend version is too old and doesn't support this documentation endpoint yet. This won't affect the functionality of the tools - they will still work correctly.`
+            }],
+          };
         }
 
-        const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+        // Generic error response - no background context
         return {
-          content: [{ type: 'text', text: `Error fetching ${docType} documentation: ${errMsg}` }],
+          content: [{ type: 'text' as const, text: `Error fetching ${docType} documentation: ${errMsg}` }],
         };
       }
     })
   );
-
-  // DISABLED: API key is set globally via --api_key flag, no need to expose it as a tool
-  // server.tool(
-  //   'get-api-key',
-  //   'Retrieves the API key for the Insforge OSS backend. This is used to authenticate all requests to the backend.',
-  //   {},
-  //   async () => {
-  //     try {
-  //       return {
-  //         content: [{ type: 'text', text: `API key: ${getApiKey()}` }],
-  //       };
-  //     } catch (error) {
-  //       const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-  //       return {
-  //         content: [{ type: 'text', text: `Error: ${errMsg}` }],
-  //       };
-  //     }
-  //   }
-  // );
 
   server.tool(
     'get-anon-key',
@@ -336,14 +330,14 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
         const result = await handleApiResponse(response);
 
-        return {
+        return await addBackgroundContext({
           content: [
             {
               type: 'text',
               text: formatSuccessMessage('Anonymous token generated', result),
             },
           ],
-        };
+        });
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
         return {
@@ -385,14 +379,14 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
         const result = await handleApiResponse(response);
 
-        return {
+        return await addBackgroundContext({
           content: [
             {
               type: 'text',
               text: formatSuccessMessage('Schema retrieved', result),
             },
           ],
-        };
+        });
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
         return {
@@ -429,14 +423,14 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
         const metadata = await handleApiResponse(response);
 
-        return {
+        return await addBackgroundContext({
           content: [
             {
               type: 'text',
               text: `Backend metadata:\n\n${JSON.stringify(metadata, null, 2)}`,
             },
           ],
-        };
+        });
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
         return {
@@ -482,14 +476,14 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
 
         const result = await handleApiResponse(response);
 
-        return {
+        return await addBackgroundContext({
           content: [
             {
               type: 'text',
               text: formatSuccessMessage('SQL query executed', result),
             },
           ],
-        };
+        });
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
         return {
@@ -567,7 +561,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
           throw new Error(`Failed to download template: ${output}`);
         }
 
-        return {
+        return await addBackgroundContext({
           content: [
             {
               type: 'text',
@@ -585,7 +579,7 @@ To: Your current project directory
 `,
             },
           ],
-        };
+        });
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
         return {
@@ -644,7 +638,7 @@ To: Your current project directory
           ? `Successfully processed ${result.rowsAffected} of ${result.totalRecords} records into table "${result.table}"`
           : result.message || 'Bulk upsert operation completed';
 
-        return {
+        return await addBackgroundContext({
           content: [
             {
               type: 'text',
@@ -657,7 +651,7 @@ To: Your current project directory
               }),
             },
           ],
-        };
+        });
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
         return {
@@ -701,14 +695,14 @@ To: Your current project directory
 
         const result = await handleApiResponse(response);
 
-        return {
+        return await addBackgroundContext({
           content: [
             {
               type: 'text',
               text: formatSuccessMessage('Bucket created', result),
             },
           ],
-        };
+        });
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
         return {
@@ -739,14 +733,14 @@ To: Your current project directory
 
         const result = await handleApiResponse(response);
 
-        return {
+        return await addBackgroundContext({
           content: [
             {
               type: 'text',
               text: formatSuccessMessage('Buckets retrieved', result),
             },
           ],
-        };
+        });
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
         return {
@@ -784,14 +778,14 @@ To: Your current project directory
 
         const result = await handleApiResponse(response);
 
-        return {
+        return await addBackgroundContext({
           content: [
             {
               type: 'text',
               text: formatSuccessMessage('Bucket deleted', result),
             },
           ],
-        };
+        });
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
         return {
@@ -850,7 +844,7 @@ To: Your current project directory
 
         const result = await handleApiResponse(response);
 
-        return {
+        return await addBackgroundContext({
           content: [
             {
               type: 'text',
@@ -860,7 +854,7 @@ To: Your current project directory
               ),
             },
           ],
-        };
+        });
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
         return {
@@ -893,14 +887,14 @@ To: Your current project directory
 
         const result = await handleApiResponse(response);
 
-        return {
+        return await addBackgroundContext({
           content: [
             {
               type: 'text',
               text: formatSuccessMessage(`Edge function '${args.slug}' details`, result),
             },
           ],
-        };
+        });
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
         return {
@@ -966,7 +960,7 @@ To: Your current project directory
 
         const fileInfo = args.codeFile ? ` from ${args.codeFile}` : '';
 
-        return {
+        return await addBackgroundContext({
           content: [
             {
               type: 'text',
@@ -976,7 +970,7 @@ To: Your current project directory
               ),
             },
           ],
-        };
+        });
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
         return {
@@ -1009,14 +1003,14 @@ To: Your current project directory
 
         const result = await handleApiResponse(response);
 
-        return {
+        return await addBackgroundContext({
           content: [
             {
               type: 'text',
               text: formatSuccessMessage(`Edge function '${args.slug}' deleted successfully`, result),
             },
           ],
-        };
+        });
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
         return {
@@ -1073,14 +1067,14 @@ To: Your current project directory
 
         const result = await handleApiResponse(response);
 
-        return {
+        return await addBackgroundContext({
           content: [
             {
               type: 'text',
               text: formatSuccessMessage(`Latest logs from ${source}`, result),
             },
           ],
-        };
+        });
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
         return {
@@ -1097,99 +1091,99 @@ To: Your current project directory
   );
 
   // --------------------------------------------------
-  // SCHEDULE TOOLS (CRON JOBS)
+  // SCHEDULE TOOLS (CRON JOBS) - COMMENTED OUT
   // --------------------------------------------------
 
-  server.tool(
-    'upsert-schedule',
-    'Create or update a cron job schedule. If id is provided, updates existing schedule; otherwise creates a new one.',
-    {
-      apiKey: z
-        .string()
-        .optional()
-        .describe('API key for authentication (optional if provided via --api_key)'),
-      id: z
-        .string()
-        .uuid()
-        .optional()
-        .describe('The UUID of the schedule to update. If omitted, a new schedule will be created.'),
-      name: z.string().min(3).describe('Schedule name (at least 3 characters)'),
-      cronSchedule: z
-        .string()
-        .describe('Cron schedule format (5 or 6 parts, e.g., "0 */2 * * *" for every 2 hours)'),
-      functionUrl: z.string().url().describe('The URL to call when the schedule triggers'),
-      httpMethod: z
-        .enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
-        .optional()
-        .default('POST')
-        .describe('HTTP method to use'),
-      headers: z
-        .record(z.string())
-        .optional()
-        .describe('HTTP headers. Values starting with "secret:" will be resolved from secrets store.'),
-      body: z
-        .record(z.unknown())
-        .optional()
-        .describe('JSON body to send with the request'),
-    },
-    withUsageTracking('upsert-schedule', async ({ apiKey, id, name, cronSchedule, functionUrl, httpMethod, headers, body }) => {
-      try {
-        // Check backend version compatibility
-        await checkToolVersion('upsert-schedule');
+  // server.tool(
+  //   'upsert-schedule',
+  //   'Create or update a cron job schedule. If id is provided, updates existing schedule; otherwise creates a new one.',
+  //   {
+  //     apiKey: z
+  //       .string()
+  //       .optional()
+  //       .describe('API key for authentication (optional if provided via --api_key)'),
+  //     id: z
+  //       .string()
+  //       .uuid()
+  //       .optional()
+  //       .describe('The UUID of the schedule to update. If omitted, a new schedule will be created.'),
+  //     name: z.string().min(3).describe('Schedule name (at least 3 characters)'),
+  //     cronSchedule: z
+  //       .string()
+  //       .describe('Cron schedule format (5 or 6 parts, e.g., "0 */2 * * *" for every 2 hours)'),
+  //     functionUrl: z.string().url().describe('The URL to call when the schedule triggers'),
+  //     httpMethod: z
+  //       .enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
+  //       .optional()
+  //       .default('POST')
+  //       .describe('HTTP method to use'),
+  //     headers: z
+  //       .record(z.string())
+  //       .optional()
+  //       .describe('HTTP headers. Values starting with "secret:" will be resolved from secrets store.'),
+  //     body: z
+  //       .record(z.unknown())
+  //       .optional()
+  //       .describe('JSON body to send with the request'),
+  //   },
+  //   withUsageTracking('upsert-schedule', async ({ apiKey, id, name, cronSchedule, functionUrl, httpMethod, headers, body }) => {
+  //     try {
+  //       // Check backend version compatibility
+  //       await checkToolVersion('upsert-schedule');
 
-        const actualApiKey = getApiKey(apiKey);
+  //       const actualApiKey = getApiKey(apiKey);
 
-        const requestBody: any = {
-          name,
-          cronSchedule,
-          functionUrl,
-          httpMethod: httpMethod || 'POST',
-        };
+  //       const requestBody: any = {
+  //         name,
+  //         cronSchedule,
+  //         functionUrl,
+  //         httpMethod: httpMethod || 'POST',
+  //       };
 
-        if (id) {
-          requestBody.id = id;
-        }
-        if (headers) {
-          requestBody.headers = headers;
-        }
-        if (body) {
-          requestBody.body = body;
-        }
+  //       if (id) {
+  //         requestBody.id = id;
+  //       }
+  //       if (headers) {
+  //         requestBody.headers = headers;
+  //       }
+  //       if (body) {
+  //         requestBody.body = body;
+  //       }
 
-        const response = await fetch(`${API_BASE_URL}/api/schedules`, {
-          method: 'POST',
-          headers: {
-            'x-api-key': actualApiKey,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(requestBody),
-        });
+  //       const response = await fetch(`${API_BASE_URL}/api/schedules`, {
+  //         method: 'POST',
+  //         headers: {
+  //           'x-api-key': actualApiKey,
+  //           'Content-Type': 'application/json',
+  //         },
+  //         body: JSON.stringify(requestBody),
+  //       });
 
-        const result = await handleApiResponse(response);
+  //       const result = await handleApiResponse(response);
 
-        const action = id ? 'updated' : 'created';
-        return {
-          content: [
-            {
-              type: 'text',
-              text: formatSuccessMessage(`Schedule '${name}' ${action} successfully`, result),
-            },
-          ],
-        };
-      } catch (error) {
-        const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Error upserting schedule: ${errMsg}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-    })
-  );
+  //       const action = id ? 'updated' : 'created';
+  //       return await addBackgroundContext({
+  //         content: [
+  //           {
+  //             type: 'text',
+  //             text: formatSuccessMessage(`Schedule '${name}' ${action} successfully`, result),
+  //           },
+  //         ],
+  //       });
+  //     } catch (error) {
+  //       const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+  //       return {
+  //         content: [
+  //           {
+  //             type: 'text',
+  //             text: `Error upserting schedule: ${errMsg}`,
+  //           },
+  //         ],
+  //         isError: true,
+  //       };
+  //     }
+  //   })
+  // );
 
   // server.tool(
   //   'get-schedules',
@@ -1310,54 +1304,54 @@ To: Your current project directory
   //   })
   // );
 
-  server.tool(
-    'delete-schedule',
-    'Delete a cron job schedule permanently',
-    {
-      apiKey: z
-        .string()
-        .optional()
-        .describe('API key for authentication (optional if provided via --api_key)'),
-      scheduleId: z.string().uuid().describe('The UUID of the schedule to delete'),
-    },
-    withUsageTracking('delete-schedule', async ({ apiKey, scheduleId }) => {
-      try {
-        // Check backend version compatibility
-        await checkToolVersion('delete-schedule');
+  // server.tool(
+  //   'delete-schedule',
+  //   'Delete a cron job schedule permanently',
+  //   {
+  //     apiKey: z
+  //       .string()
+  //       .optional()
+  //       .describe('API key for authentication (optional if provided via --api_key)'),
+  //     scheduleId: z.string().uuid().describe('The UUID of the schedule to delete'),
+  //   },
+  //   withUsageTracking('delete-schedule', async ({ apiKey, scheduleId }) => {
+  //     try {
+  //       // Check backend version compatibility
+  //       await checkToolVersion('delete-schedule');
 
-        const actualApiKey = getApiKey(apiKey);
+  //       const actualApiKey = getApiKey(apiKey);
 
-        const response = await fetch(`${API_BASE_URL}/api/schedules/${scheduleId}`, {
-          method: 'DELETE',
-          headers: {
-            'x-api-key': actualApiKey,
-          },
-        });
+  //       const response = await fetch(`${API_BASE_URL}/api/schedules/${scheduleId}`, {
+  //         method: 'DELETE',
+  //         headers: {
+  //           'x-api-key': actualApiKey,
+  //         },
+  //       });
 
-        const result = await handleApiResponse(response);
+  //       const result = await handleApiResponse(response);
 
-        return {
-          content: [
-            {
-              type: 'text',
-              text: formatSuccessMessage(`Schedule ${scheduleId} deleted successfully`, result),
-            },
-          ],
-        };
-      } catch (error) {
-        const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Error deleting schedule: ${errMsg}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-    })
-  );
+  //       return await addBackgroundContext({
+  //         content: [
+  //           {
+  //             type: 'text',
+  //             text: formatSuccessMessage(`Schedule ${scheduleId} deleted successfully`, result),
+  //           },
+  //         ],
+  //       });
+  //     } catch (error) {
+  //       const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+  //       return {
+  //         content: [
+  //           {
+  //             type: 'text',
+  //             text: `Error deleting schedule: ${errMsg}`,
+  //           },
+  //         ],
+  //         isError: true,
+  //       };
+  //     }
+  //   })
+  // );
 
   // Return the configured values for reference
   return {
