@@ -5,9 +5,10 @@ import { registerInsforgeTools } from '../shared/tools.js';
 
 // Parse command line arguments
 program.option('--api_key <value>', 'API Key');
+program.option('--api_base_url <value>', 'API Base URL');
 program.parse(process.argv);
 const options = program.opts();
-const { api_key } = options;
+const { api_key, api_base_url } = options;
 
 // Create MCP server
 const server = new McpServer({
@@ -18,7 +19,7 @@ const server = new McpServer({
 // Register all Insforge tools with the server
 const toolsConfig = registerInsforgeTools(server, {
   apiKey: api_key,
-  apiBaseUrl: process.env.API_BASE_URL,
+  apiBaseUrl: api_base_url || process.env.API_BASE_URL,
 });
 
 // Main function to start the stdio server
