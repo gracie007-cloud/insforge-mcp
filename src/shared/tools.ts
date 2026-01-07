@@ -5,6 +5,7 @@ import { promises as fs } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { tmpdir } from 'os';
+import archiver from 'archiver';
 import { handleApiResponse, formatSuccessMessage } from './response-handler.js';
 import { UsageTracker } from './usage-tracker.js';
 import {
@@ -17,6 +18,9 @@ import {
   functionUploadRequestSchema,
   bulkUpsertRequestSchema,
   docTypeSchema,
+  startDeploymentRequestSchema,
+  StartDeploymentRequest,
+  CreateDeploymentResponse,
 } from '@insforge/shared-schemas';
 import FormData from 'form-data';
 
@@ -1092,6 +1096,145 @@ To: Your current project directory
   );
 
   // --------------------------------------------------
+  // DEPLOYMENT TOOLS
+  // --------------------------------------------------
+
+  server.tool(
+    'create-deployment',
+    'Deploy source code from a directory. This tool zips files, uploads to cloud storage, and triggers deployment with optional environment variables and project settings.',
+    {
+      sourceDirectory: z.string().describe('Absolute path to the source directory containing files to deploy (e.g., /Users/name/project or C:\\Users\\name\\project). Do not use relative paths like "."'),
+      ...startDeploymentRequestSchema.shape,
+    },
+    withUsageTracking('create-deployment', async ({ sourceDirectory, projectSettings, envVars, meta }) => {
+      try {
+        // Use the provided absolute path directly
+        const resolvedSourceDir = sourceDirectory;
+
+        // Step 1: Create deployment to get presigned upload URL
+        const createResponse = await fetch(`${API_BASE_URL}/api/deployments`, {
+          method: 'POST',
+          headers: {
+            'x-api-key': getApiKey(),
+            'Content-Type': 'application/json',
+          },
+        });
+
+        const createResult: CreateDeploymentResponse = await handleApiResponse(createResponse);
+        const { id: deploymentId, uploadUrl, uploadFields } = createResult;
+
+        // Step 2: Create zip in memory using archiver (cross-platform)
+        // Use archive.directory() instead of glob() for better Windows compatibility
+        const zipBuffer = await new Promise<Buffer>((resolve, reject) => {
+          const archive = archiver('zip', { zlib: { level: 9 } });
+          const chunks: Buffer[] = [];
+
+          archive.on('data', (chunk: Buffer) => chunks.push(chunk));
+          archive.on('end', () => resolve(Buffer.concat(chunks)));
+          archive.on('error', (err: Error) => reject(err));
+
+          // Patterns to exclude (normalized for cross-platform)
+          const excludePatterns = [
+            'node_modules',
+            '.git',
+            '.next',
+            'dist',
+            'build',
+            '.env.local',
+            '.DS_Store',
+          ];
+
+          // Add directory with filter function for cross-platform compatibility
+          archive.directory(resolvedSourceDir, false, (entry) => {
+            // Normalize path separators for cross-platform matching
+            const normalizedName = entry.name.replace(/\\/g, '/');
+
+            // Check if file should be excluded
+            for (const pattern of excludePatterns) {
+              if (normalizedName.startsWith(pattern + '/') ||
+                  normalizedName === pattern ||
+                  normalizedName.endsWith('/' + pattern) ||
+                  normalizedName.includes('/' + pattern + '/')) {
+                return false; // Exclude this entry
+              }
+            }
+
+            // Skip log files
+            if (normalizedName.endsWith('.log')) {
+              return false;
+            }
+
+            return entry; // Include this entry
+          });
+
+          archive.finalize();
+        });
+
+        // Step 3: Upload zip to presigned URL
+        const uploadFormData = new FormData();
+
+        // Add all presigned fields first
+        for (const [key, value] of Object.entries(uploadFields)) {
+          uploadFormData.append(key, value);
+        }
+        // Add the file last
+        uploadFormData.append('file', zipBuffer, {
+          filename: 'deployment.zip',
+          contentType: 'application/zip',
+        });
+
+        const uploadResponse = await fetch(uploadUrl, {
+          method: 'POST',
+          body: uploadFormData,
+          headers: uploadFormData.getHeaders(),
+        });
+
+        if (!uploadResponse.ok) {
+          const uploadError = await uploadResponse.text();
+          throw new Error(`Failed to upload zip file: ${uploadError}`);
+        }
+
+        // Step 4: Start the deployment
+        const startBody: StartDeploymentRequest = {};
+        if (projectSettings) startBody.projectSettings = projectSettings;
+        if (envVars) startBody.envVars = envVars;
+        if (meta) startBody.meta = meta;
+
+        const startResponse = await fetch(`${API_BASE_URL}/api/deployments/${deploymentId}/start`, {
+          method: 'POST',
+          headers: {
+            'x-api-key': getApiKey(),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(startBody),
+        });
+
+        const startResult = await handleApiResponse(startResponse);
+
+        return await addBackgroundContext({
+          content: [
+            {
+              type: 'text',
+              text: formatSuccessMessage('Deployment started', startResult) + '\n\nNote: You can check deployment status by querying the system.deployments table.',
+            },
+          ],
+        });
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Error creating deployment: ${errMsg}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    })
+  );
+
+  // --------------------------------------------------
   // SCHEDULE TOOLS (CRON JOBS) - COMMENTED OUT
   // --------------------------------------------------
 
@@ -1358,6 +1501,6 @@ To: Your current project directory
   return {
     apiKey: GLOBAL_API_KEY,
     apiBaseUrl: API_BASE_URL,
-    toolCount: 15,
+    toolCount: 16,
   };
 }
