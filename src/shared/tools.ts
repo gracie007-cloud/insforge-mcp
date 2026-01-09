@@ -45,128 +45,147 @@ interface HealthCheckResponse {
 }
 
 /**
- * Version cache entry
+ * Tool version requirement specification
+ * - minVersion: Minimum backend version required (inclusive)
+ * - maxVersion: Maximum backend version supported (inclusive, for deprecated tools)
+ * - Tools not in the map have no version requirements (available for all versions)
  */
-interface VersionCacheEntry {
-  version: string;
-  timestamp: number;
+interface ToolVersionRequirement {
+  minVersion?: string;
+  maxVersion?: string;
 }
 
 /**
  * Tool version requirements map
- * Maps tool names to their minimum required backend version
+ * Maps tool names to their version requirements
+ *
+ * Examples:
+ * - { minVersion: '1.1.0' } - Available from v1.1.0 onwards
+ * - { maxVersion: '2.0.0' } - Deprecated after v2.0.0
+ * - { minVersion: '1.1.0', maxVersion: '2.0.0' } - Available only between v1.1.0 and v2.0.0
+ * - Not in map - Available for all versions
  */
-const TOOL_VERSION_REQUIREMENTS: Record<string, string> = {
-  'upsert-schedule': '1.1.1',
-  // 'get-schedules': '1.1.1',
-  // 'get-schedule-logs': '1.1.1',
-  'delete-schedule': '1.1.1',
+const TOOL_VERSION_REQUIREMENTS: Record<string, ToolVersionRequirement> = {
+  // Schedule tools - require backend v1.1.1+
+  'upsert-schedule': { minVersion: '1.1.1' },
+  'delete-schedule': { minVersion: '1.1.1' },
+  // 'get-schedules': { minVersion: '1.1.1' },
+  // 'get-schedule-logs': { minVersion: '1.1.1' },
+
+  'create-deployment': { minVersion: '1.4.7' },
+
+  // Example of a deprecated tool (uncomment when needed):
+  // 'legacy-tool': { minVersion: '1.0.0', maxVersion: '1.5.0' },
 };
+
+/**
+ * Compare semantic versions (e.g., "1.1.0" vs "1.0.0")
+ * Returns: -1 if v1 < v2, 0 if v1 === v2, 1 if v1 > v2
+ */
+function compareVersions(v1: string, v2: string): number {
+  // Strip 'v' prefix if present and remove pre-release metadata (e.g., "-dev.31")
+  const clean1 = v1.replace(/^v/, '').split('-')[0];
+  const clean2 = v2.replace(/^v/, '').split('-')[0];
+
+  const parts1 = clean1.split('.').map(Number);
+  const parts2 = clean2.split('.').map(Number);
+
+  for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+    const part1 = parts1[i] || 0;
+    const part2 = parts2[i] || 0;
+
+    if (part1 > part2) return 1;
+    if (part1 < part2) return -1;
+  }
+
+  return 0;
+}
+
+/**
+ * Check if a tool should be registered based on backend version
+ * @param toolName - Name of the tool to check
+ * @param backendVersion - Current backend version
+ * @returns true if tool should be registered, false otherwise
+ */
+function shouldRegisterTool(toolName: string, backendVersion: string): boolean {
+  const requirement = TOOL_VERSION_REQUIREMENTS[toolName];
+
+  // No requirement means tool is available for all versions
+  if (!requirement) {
+    return true;
+  }
+
+  const { minVersion, maxVersion } = requirement;
+
+  // Check minimum version requirement
+  if (minVersion && compareVersions(backendVersion, minVersion) < 0) {
+    return false;
+  }
+
+  // Check maximum version requirement (for deprecated tools)
+  if (maxVersion && compareVersions(backendVersion, maxVersion) > 0) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Fetch backend version from health endpoint
+ * @throws Error if backend is unreachable
+ */
+async function fetchBackendVersion(apiBaseUrl: string): Promise<string> {
+  const response = await fetch(`${apiBaseUrl}/api/health`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Health check failed with status ${response.status}`);
+  }
+
+  const health = await response.json() as HealthCheckResponse;
+  return health.version;
+}
 
 /**
  * Register all Insforge tools on an MCP server
  * This centralizes all tool definitions to avoid duplication
+ * Tools are dynamically registered based on backend version compatibility
  */
-export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {}) {
+export async function registerInsforgeTools(server: McpServer, config: ToolsConfig = {}) {
   const GLOBAL_API_KEY = config.apiKey || process.env.API_KEY || '';
   const API_BASE_URL = config.apiBaseUrl || process.env.API_BASE_URL || 'http://localhost:7130';
 
   // Initialize usage tracker
   const usageTracker = new UsageTracker(API_BASE_URL, GLOBAL_API_KEY);
 
-  // Version cache with 5-minute TTL
-  let versionCache: VersionCacheEntry | null = null;
-  const VERSION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes in milliseconds
+  // Fetch backend version for dynamic tool registration (fails if backend is offline)
+  const backendVersion = await fetchBackendVersion(API_BASE_URL);
+  console.error(`Backend version: ${backendVersion}`);
 
-  /**
-   * Fetch backend version from health endpoint with caching
-   */
-  async function getBackendVersion(): Promise<string> {
-    const now = Date.now();
+  // Track registered tool count
+  let toolCount = 0;
 
-    // Return cached version if still valid
-    if (versionCache && (now - versionCache.timestamp) < VERSION_CACHE_TTL) {
-      return versionCache.version;
+  // Helper to register a tool with version checking
+  // Using 'any' for args to handle server.tool's multiple overloads
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const registerTool = (toolName: string, ...args: any[]) => {
+    if (shouldRegisterTool(toolName, backendVersion)) {
+      (server.tool as any)(toolName, ...args);
+      toolCount++;
+      return true;
+    } else {
+      const req = TOOL_VERSION_REQUIREMENTS[toolName];
+      const reason = req?.minVersion && compareVersions(backendVersion, req.minVersion) < 0
+        ? `requires backend >= ${req.minVersion}`
+        : `deprecated after backend ${req?.maxVersion}`;
+      console.error(`Skipping tool '${toolName}': ${reason} (current: ${backendVersion})`);
+      return false;
     }
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/health`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`Health check failed with status ${response.status}`);
-      }
-
-      const health: HealthCheckResponse = await response.json();
-
-      // Cache the version
-      versionCache = {
-        version: health.version,
-        timestamp: now,
-      };
-
-      return health.version;
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to fetch backend version: ${errMsg}`);
-    }
-  }
-
-  /**
-   * Compare semantic versions (e.g., "1.1.0" vs "1.0.0")
-   * Returns: -1 if v1 < v2, 0 if v1 === v2, 1 if v1 > v2
-   */
-  function compareVersions(v1: string, v2: string): number {
-    // Strip 'v' prefix if present and remove pre-release metadata (e.g., "-dev.31")
-    const clean1 = v1.replace(/^v/, '').split('-')[0];
-    const clean2 = v2.replace(/^v/, '').split('-')[0];
-
-    const parts1 = clean1.split('.').map(Number);
-    const parts2 = clean2.split('.').map(Number);
-
-    for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
-      const part1 = parts1[i] || 0;
-      const part2 = parts2[i] || 0;
-
-      if (part1 > part2) return 1;
-      if (part1 < part2) return -1;
-    }
-
-    return 0;
-  }
-
-  /**
-   * Check if tool is supported by current backend version
-   * @throws Error if version requirement is not met
-   */
-  async function checkToolVersion(toolName: string): Promise<void> {
-    const requiredVersion = TOOL_VERSION_REQUIREMENTS[toolName];
-
-    // If no version requirement, tool is available in all versions
-    if (!requiredVersion) {
-      return;
-    }
-
-    try {
-      const currentVersion = await getBackendVersion();
-
-      if (compareVersions(currentVersion, requiredVersion) < 0) {
-        throw new Error(
-          `Tool '${toolName}' requires backend version ${requiredVersion} or higher, but current version is ${currentVersion}. Please upgrade your Insforge backend server.`
-        );
-      }
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('requires backend version')) {
-        throw error; // Re-throw version mismatch errors
-      }
-      // If health check fails, log warning but allow tool to proceed
-      console.warn(`Warning: Could not verify backend version for tool '${toolName}': ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
+  };
 
   // Helper function to track tool usage
   async function trackToolUsage(toolName: string, success: boolean = true): Promise<void> {
@@ -248,23 +267,17 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
   // Helper function to add background context to responses
   // Only enabled for backend versions < 1.1.7 (legacy support)
   const addBackgroundContext = async <T extends { content: Array<{ type: 'text'; text: string }> }>(response: T): Promise<T> => {
-    try {
-      const currentVersion = await getBackendVersion();
-      const isLegacyVersion = compareVersions(currentVersion, '1.1.7') < 0;
+    const isLegacyVersion = compareVersions(backendVersion, '1.1.7') < 0;
 
-      // Only add context for versions before 1.1.7
-      if (isLegacyVersion) {
-        const context = await fetchInsforgeInstructionsContext();
-        if (context && response.content && Array.isArray(response.content)) {
-          response.content.push({
-            type: 'text' as const,
-            text: `\n\n---\n🔧 INSFORGE DEVELOPMENT RULES (Auto-loaded):\n${context}`,
-          });
-        }
+    // Only add context for versions before 1.1.7
+    if (isLegacyVersion) {
+      const context = await fetchInsforgeInstructionsContext();
+      if (context && response.content && Array.isArray(response.content)) {
+        response.content.push({
+          type: 'text' as const,
+          text: `\n\n---\n🔧 INSFORGE DEVELOPMENT RULES (Auto-loaded):\n${context}`,
+        });
       }
-    } catch {
-      // If version check fails, skip background context (safer default)
-      console.warn('Could not determine backend version, skipping background context');
     }
     return response;
   };
@@ -274,7 +287,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
   // INSTRUCTION TOOLS
   // --------------------------------------------------
 
-  server.tool(
+  registerTool(
     'fetch-docs',
     'Fetch Insforge documentation. Use "instructions" for essential backend setup (MANDATORY FIRST), or select specific SDK docs for database, auth, storage, functions, or AI integration.',
     {
@@ -313,7 +326,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
     })
   );
 
-  server.tool(
+  registerTool(
     'get-anon-key',
     'Generate an anonymous JWT token that never expires. Requires admin API key. Use this for client-side applications that need public access.',
     {
@@ -362,7 +375,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
   // DATABASE TOOLS
   // --------------------------------------------------
 
-  server.tool(
+  registerTool(
     'get-table-schema',
     'Returns the detailed schema(including RLS, indexes, constraints, etc.) of a specific table',
     {
@@ -407,7 +420,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
     })
   );
 
-  server.tool(
+  registerTool(
     'get-backend-metadata',
     'Index all backend metadata',
     {
@@ -451,7 +464,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
     })
   );
 
-  server.tool(
+  registerTool(
     'run-raw-sql',
     'Execute raw SQL query with optional parameters. Admin access required. Use with caution as it can modify data directly.',
     {
@@ -504,7 +517,7 @@ export function registerInsforgeTools(server: McpServer, config: ToolsConfig = {
     })
   );
 
-  server.tool(
+  registerTool(
     'download-template',
     'CRITICAL: MANDATORY FIRST STEP for all new InsForge projects. Download pre-configured starter template to a temporary directory. After download, you MUST copy files to current directory using the provided command.',
     {
@@ -600,7 +613,7 @@ To: Your current project directory
     })
   );
 
-  server.tool(
+  registerTool(
     'bulk-upsert',
     'Bulk insert or update data from CSV or JSON file. Supports upsert operations with a unique key.',
     {
@@ -676,7 +689,7 @@ To: Your current project directory
   // STORAGE TOOLS
   // --------------------------------------------------
 
-  server.tool(
+  registerTool(
     'create-bucket',
     'Create new storage bucket',
     {
@@ -723,7 +736,7 @@ To: Your current project directory
     })
   );
 
-  server.tool(
+  registerTool(
     'list-buckets',
     'Lists all storage buckets',
     {},
@@ -761,7 +774,7 @@ To: Your current project directory
     })
   );
 
-  server.tool(
+  registerTool(
     'delete-bucket',
     'Deletes a storage bucket',
     {
@@ -810,7 +823,7 @@ To: Your current project directory
   // EDGE FUNCTION TOOLS
   // --------------------------------------------------
 
-  server.tool(
+  registerTool(
     'create-function',
     'Create a new edge function that runs in Deno runtime. The code must be written to a file first for version control',
     {
@@ -821,7 +834,7 @@ To: Your current project directory
           'Path to JavaScript file containing the function code. Must export: module.exports = async function(request) { return new Response(...) }'
         ),
     },
-    withUsageTracking('create-function', async (args) => {
+    withUsageTracking('create-function', async (args: any) => {
       try {
         let code: string;
         try {
@@ -875,13 +888,13 @@ To: Your current project directory
     })
   );
 
-  server.tool(
+  registerTool(
     'get-function',
     'Get details of a specific edge function including its code',
     {
       slug: z.string().describe('The slug identifier of the function'),
     },
-    withUsageTracking('get-function', async (args) => {
+    withUsageTracking('get-function', async (args: any) => {
       try {
         const response = await fetch(`${API_BASE_URL}/api/functions/${args.slug}`, {
           method: 'GET',
@@ -915,7 +928,7 @@ To: Your current project directory
     })
   );
 
-  server.tool(
+  registerTool(
     'update-function',
     'Update an existing edge function code or metadata',
     {
@@ -928,7 +941,7 @@ To: Your current project directory
           'Path to JavaScript file containing the new function code. Must export: module.exports = async function(request) { return new Response(...) }'
         ),
     },
-    withUsageTracking('update-function', async (args) => {
+    withUsageTracking('update-function', async (args: any) => {
       try {
         const updateData: FunctionUpdateRequest = {};
         if (args.name) {
@@ -991,13 +1004,13 @@ To: Your current project directory
     })
   );
 
-  server.tool(
+  registerTool(
     'delete-function',
     'Delete an edge function permanently',
     {
       slug: z.string().describe('The slug identifier of the function to delete'),
     },
-    withUsageTracking('delete-function', async (args) => {
+    withUsageTracking('delete-function', async (args: any) => {
       try {
         const response = await fetch(`${API_BASE_URL}/api/functions/${args.slug}`, {
           method: 'DELETE',
@@ -1035,7 +1048,7 @@ To: Your current project directory
   // CONTAINER LOGS TOOLS
   // --------------------------------------------------
 
-  server.tool(
+  registerTool(
     'get-container-logs',
     'Get latest logs from a specific container/service. Use this to help debug problems with your app.',
     {
@@ -1099,7 +1112,7 @@ To: Your current project directory
   // DEPLOYMENT TOOLS
   // --------------------------------------------------
 
-  server.tool(
+  registerTool(
     'create-deployment',
     'Deploy source code from a directory. This tool zips files, uploads to cloud storage, and triggers deployment with optional environment variables and project settings.',
     {
@@ -1501,6 +1514,7 @@ To: Your current project directory
   return {
     apiKey: GLOBAL_API_KEY,
     apiBaseUrl: API_BASE_URL,
-    toolCount: 16,
+    toolCount,
+    backendVersion,
   };
 }

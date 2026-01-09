@@ -125,13 +125,13 @@ app.post('/mcp', async (req: Request, res: Response) => {
       version: '1.0.0',
     });
     
-    // Register tools with user's API key and base URL
-    registerInsforgeTools(mcpServer, {
+    // Register tools with user's API key and base URL (async to support dynamic version-based registration)
+    await registerInsforgeTools(mcpServer, {
       apiKey,
       apiBaseUrl,
     });
-    
-    // Connect server to transport BEFORE handling request
+
+    // Connect server to transport AFTER tool registration is complete
     console.log('Connecting server to transport...');
     await mcpServer.connect(transport);
     console.log('Server connected successfully');
