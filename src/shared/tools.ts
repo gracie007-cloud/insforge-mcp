@@ -59,6 +59,7 @@ const TOOL_VERSION_REQUIREMENTS: Record<string, string> = {
   // 'get-schedules': '1.1.1',
   // 'get-schedule-logs': '1.1.1',
   'delete-schedule': '1.1.1',
+  'fetch-sdk-docs': '1.4.7',
 };
 
 /**
@@ -356,6 +357,8 @@ Supported languages: ${sdkLanguageSchema.options.join(', ')}`,
     },
     withUsageTracking('fetch-sdk-docs', async ({ sdkFeature, sdkLanguage }) => {
       try {
+        await checkToolVersion('fetch-sdk-docs');
+
         const content = await fetchSDKDocumentation(sdkFeature, sdkLanguage);
 
         return await addBackgroundContext({
