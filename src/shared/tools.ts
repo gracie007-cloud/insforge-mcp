@@ -13,9 +13,9 @@ import {
   createBucketRequestSchema,
   rawSQLRequestSchema,
   RawSQLRequest,
-  FunctionUpdateRequest,
-  functionUpdateRequestSchema,
-  functionUploadRequestSchema,
+  UpdateFunctionRequest,
+  updateFunctionRequestSchema,
+  uploadFunctionRequestSchema,
   bulkUpsertRequestSchema,
   docTypeSchema,
   startDeploymentRequestSchema,
@@ -827,7 +827,7 @@ To: Your current project directory
     'create-function',
     'Create a new edge function that runs in Deno runtime. The code must be written to a file first for version control',
     {
-      ...functionUploadRequestSchema.omit({ code: true }).shape,
+      ...uploadFunctionRequestSchema.omit({ code: true }).shape,
       codeFile: z
         .string()
         .describe(
@@ -933,7 +933,7 @@ To: Your current project directory
     'Update an existing edge function code or metadata',
     {
       slug: z.string().describe('The slug identifier of the function to update'),
-      ...functionUpdateRequestSchema.omit({ code: true }).shape,
+      ...updateFunctionRequestSchema.omit({ code: true }).shape,
       codeFile: z
         .string()
         .optional()
@@ -943,7 +943,7 @@ To: Your current project directory
     },
     withUsageTracking('update-function', async (args: any) => {
       try {
-        const updateData: FunctionUpdateRequest = {};
+        const updateData: UpdateFunctionRequest = {};
         if (args.name) {
           updateData.name = args.name;
         }
