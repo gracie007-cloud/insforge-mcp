@@ -1135,6 +1135,32 @@ To: Your current project directory
           };
         }
 
+        // Validate that sourceDirectory exists and is a directory
+        try {
+          const stats = await fs.stat(sourceDirectory);
+          if (!stats.isDirectory()) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Error: "${sourceDirectory}" is not a directory. Please provide a path to a directory containing the source code.`,
+                },
+              ],
+              isError: true,
+            };
+          }
+        } catch (statError) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Error: Directory "${sourceDirectory}" does not exist or is not accessible. Please verify the path is correct.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
         // Use the provided absolute path directly
         const resolvedSourceDir = sourceDirectory;
 
@@ -1165,9 +1191,10 @@ To: Your current project directory
             'node_modules',
             '.git',
             '.next',
+            '.env',
+            '.env.local',
             'dist',
             'build',
-            '.env.local',
             '.DS_Store',
           ];
 
@@ -1182,7 +1209,7 @@ To: Your current project directory
                   normalizedName === pattern ||
                   normalizedName.endsWith('/' + pattern) ||
                   normalizedName.includes('/' + pattern + '/')) {
-                return false; // Exclude this entry
+                return false;
               }
             }
 
