@@ -1121,6 +1121,20 @@ To: Your current project directory
     },
     withUsageTracking('create-deployment', async ({ sourceDirectory, projectSettings, envVars, meta }) => {
       try {
+        // Validate that sourceDirectory is an absolute path
+        const isAbsolutePath = sourceDirectory.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(sourceDirectory);
+        if (!isAbsolutePath) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Error: sourceDirectory must be an absolute path, not a relative path like "${sourceDirectory}". Please provide the full path to the source directory (e.g., /Users/name/project on macOS/Linux or C:\\Users\\name\\project on Windows).`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
         // Use the provided absolute path directly
         const resolvedSourceDir = sourceDirectory;
 
