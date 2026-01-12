@@ -247,6 +247,7 @@ export async function registerInsforgeTools(server: McpServer, config: ToolsConf
         // Preserve paths after the domain by only replacing the base URL
         content = content.replace(/http:\/\/localhost:7130/g, API_BASE_URL);
         content = content.replace(/https:\/\/your-app\.region\.insforge\.app/g, API_BASE_URL);
+        content = content.replace(/https:\/\/your-app\.insforge\.app/g, API_BASE_URL);
         return content;
       }
 
@@ -280,6 +281,7 @@ export async function registerInsforgeTools(server: McpServer, config: ToolsConf
         // Preserve paths after the domain by only replacing the base URL
         content = content.replace(/http:\/\/localhost:7130/g, API_BASE_URL);
         content = content.replace(/https:\/\/your-app\.region\.insforge\.app/g, API_BASE_URL);
+        content = content.replace(/https:\/\/your-app\.insforge\.app/g, API_BASE_URL);
         return content;
       }
 
