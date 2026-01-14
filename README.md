@@ -12,7 +12,9 @@
 
 # Insforge MCP Server
 
-Model Context Protocol server for [Insforge](https://github.com/InsForge/insforge).
+InsForge turns your coding agents into full-stack builders, letting them add backend features like auth, databases, file storage, serverless functions, and LLMs to your apps in seconds.
+
+This repo is Model Context Protocol server for [Insforge](https://github.com/InsForge/insforge).
 
 <a href="https://glama.ai/mcp/servers/@InsForge/insforge-mcp">
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@InsForge/insforge-mcp/badge" alt="Insforge Server MCP server" />
