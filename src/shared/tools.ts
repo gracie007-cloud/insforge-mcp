@@ -75,7 +75,7 @@ const TOOL_VERSION_REQUIREMENTS: Record<string, ToolVersionRequirement> = {
   // 'get-schedule-logs': { minVersion: '1.1.1' },
 
   'create-deployment': { minVersion: '1.4.7' },
-  // 'fetch-sdk-docs': { minVersion: '1.4.7' },
+  'fetch-sdk-docs': { minVersion: '1.5.1' },
 
   // Example of a deprecated tool (uncomment when needed):
   // 'legacy-tool': { minVersion: '1.0.0', maxVersion: '1.5.0' },
