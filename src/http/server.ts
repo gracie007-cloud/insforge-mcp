@@ -72,8 +72,12 @@ function isInitializeRequest(body: unknown): boolean {
   return false;
 }
 
-function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex').substring(0, 16);
+/**
+ * Generate a short, non-reversible fingerprint of a token for logging
+ * Uses first 8 chars of SHA-256 hash to identify tokens without exposing them
+ */
+function tokenFingerprint(token: string): string {
+  return createHash('sha256').update(token).digest('hex').substring(0, 8);
 }
 
 /**
@@ -120,22 +124,16 @@ function extractLegacyHeaders(req: Request): { apiKey?: string; apiBaseUrl?: str
 app.get(API_ENDPOINTS.health, async (_req: Request, res: Response) => {
   const sessionManager = getSessionManager();
   const stats = await sessionManager.getStats();
-  const redisConfig = getRedisConfig();
 
   res.json({
     status: 'ok',
-    server: 'insforge-mcp-remote',
+    server: 'insforge-mcp',
     version: '1.0.0',
     protocols: {
       streamableHttp: '2025-03-26',
       sse: '2024-11-05 (deprecated)',
     },
     sessions: stats,
-    redis: {
-      host: redisConfig.host,
-      cluster: redisConfig.cluster,
-      tls: redisConfig.tls,
-    },
     authentication: 'OAuth Bearer Token',
   });
 });
@@ -271,10 +269,33 @@ app.get(OAUTH_ENDPOINTS.authorize, async (req: Request, res: Response) => {
     });
   }
 
-  const clientData = JSON.parse(clientDataStr) as {
-    client_id: string;
-    redirect_uris: string[];
-  };
+  let clientData: { client_id: string; redirect_uris: string[] };
+  try {
+    clientData = JSON.parse(clientDataStr);
+  } catch (parseError) {
+    console.error(`[OAuth] Failed to parse client data for client_id ${client_id}:`, parseError);
+    return res.status(500).json({
+      error: 'server_error',
+      error_description: 'Failed to read client registration data.',
+    });
+  }
+
+  // Validate required fields exist and have correct types
+  if (!clientData.client_id || typeof clientData.client_id !== 'string') {
+    console.error(`[OAuth] Invalid client data: missing or invalid client_id for ${client_id}`);
+    return res.status(500).json({
+      error: 'server_error',
+      error_description: 'Client registration data is corrupted.',
+    });
+  }
+
+  if (!Array.isArray(clientData.redirect_uris)) {
+    console.error(`[OAuth] Invalid client data: missing or invalid redirect_uris for ${client_id}`);
+    return res.status(500).json({
+      error: 'server_error',
+      error_description: 'Client registration data is corrupted.',
+    });
+  }
 
   // Validate redirect_uri matches registered URIs
   if (!clientData.redirect_uris.includes(redirect_uri as string)) {
@@ -649,7 +670,7 @@ app.post(STREAMABLE_HTTP_ENDPOINTS.mcp, async (req: Request, res: Response) => {
   const oauthToken = extractOAuthToken(req);
   const { apiKey: legacyApiKey, apiBaseUrl: legacyApiBaseUrl } = extractLegacyHeaders(req);
 
-  console.log(`[${new Date().toISOString()}] POST ${STREAMABLE_HTTP_ENDPOINTS.mcp} - Session: ${sessionId || 'none'}, Token: ${oauthToken ? oauthToken.substring(0, 20) + '...' : 'none'}`);
+  console.log(`[${new Date().toISOString()}] POST ${STREAMABLE_HTTP_ENDPOINTS.mcp} - Session: ${sessionId || 'none'}, Token: ${oauthToken ? tokenFingerprint(oauthToken) : 'none'}`);
 
   let transport: StreamableHTTPServerTransport;
 
@@ -704,14 +725,29 @@ app.post(STREAMABLE_HTTP_ENDPOINTS.mcp, async (req: Request, res: Response) => {
         });
       }
 
+      // At this point we have legacyApiBaseUrl but projectInfo is null
+      // This means either:
+      // 1. legacyApiKey is provided (valid legacy auth)
+      // 2. oauthToken is provided but not bound to a project (invalid - already handled above)
+      // 3. Both are provided (use legacyApiKey, ignore oauthToken)
+      //
+      // If we only have oauthToken without legacyApiKey, reject the request
+      // because OAuth tokens are not interchangeable with API keys
+      if (!legacyApiKey) {
+        return res.status(401).json({
+          error: 'invalid_credentials',
+          error_description: 'Legacy authentication requires X-Api-Key header. OAuth tokens cannot be used as API keys.',
+        });
+      }
+
       projectInfo = {
-        apiKey: legacyApiKey || oauthToken || '',
+        apiKey: legacyApiKey,
         apiBaseUrl: legacyApiBaseUrl,
         projectId: 'legacy',
         projectName: 'Legacy Session',
         userId: 'legacy',
         organizationId: 'legacy',
-        oauthTokenHash: oauthToken ? hashToken(oauthToken) : 'legacy',
+        oauthTokenHash: 'legacy',
       };
     }
 
