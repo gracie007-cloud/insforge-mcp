@@ -875,6 +875,12 @@ app.get(SSE_ENDPOINTS.sse, async (req: Request, res: Response) => {
   res.on('close', () => {
     console.log(`[SSE] Session closed: ${transport.sessionId}`);
     sseTransports.delete(transport.sessionId);
+
+    // Clean up the session from SessionManager (async with error handling)
+    const sessionManager = getSessionManager();
+    sessionManager.deleteSession(transport.sessionId).catch((error) => {
+      console.error(`[SSE] Failed to cleanup session ${transport.sessionId}:`, error);
+    });
   });
 
   // Create and connect MCP server

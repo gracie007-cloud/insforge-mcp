@@ -57,6 +57,9 @@ export class SessionManager {
 
   /**
    * Create a new session
+   *
+   * Uses connect-first strategy: establishes transport connection before
+   * persisting to Redis to avoid orphaned records if connection fails
    */
   async createSession(
     sessionId: string,
@@ -77,7 +80,11 @@ export class SessionManager {
       apiBaseUrl: sessionData.apiBaseUrl,
     });
 
-    // Create full session data with backend version (single write)
+    // Connect server to transport BEFORE persisting to Redis
+    // This ensures we don't create orphaned Redis records if connection fails
+    await server.connect(transport);
+
+    // Only persist after successful connection
     const fullSessionData: SessionData = {
       ...sessionData,
       createdAt: now,
@@ -85,15 +92,12 @@ export class SessionManager {
       backendVersion: toolsConfig.backendVersion,
     };
 
-    // Store in Redis with TTL (single write)
+    // Store in Redis with TTL
     await redis.setex(
       SESSION_KEY_PREFIX + sessionId,
       SESSION_TTL,
       JSON.stringify(fullSessionData)
     );
-
-    // Connect server to transport
-    await server.connect(transport);
 
     // Store runtime instances in memory
     this.runtimeSessions.set(sessionId, { server, transport, transportType: 'streamable' });
@@ -206,6 +210,9 @@ export class SessionManager {
 
   /**
    * Create a new SSE session (for legacy SSE transport)
+   *
+   * Uses connect-first strategy: establishes transport connection before
+   * persisting to Redis to avoid orphaned records if connection fails
    */
   async createSSESession(
     sessionId: string,
@@ -226,7 +233,12 @@ export class SessionManager {
       apiBaseUrl: sessionData.apiBaseUrl,
     });
 
-    // Create full session data with backend version (single write)
+    // Connect server to SSE transport BEFORE persisting to Redis
+    // This ensures we don't create orphaned Redis records if connection fails
+    // Note: Type assertion needed due to SDK type compatibility issue
+    await server.connect(transport as unknown as Parameters<typeof server.connect>[0]);
+
+    // Only persist after successful connection
     const fullSessionData: SessionData = {
       ...sessionData,
       createdAt: now,
@@ -234,16 +246,12 @@ export class SessionManager {
       backendVersion: toolsConfig.backendVersion,
     };
 
-    // Store in Redis with TTL (single write)
+    // Store in Redis with TTL
     await redis.setex(
       SESSION_KEY_PREFIX + sessionId,
       SESSION_TTL,
       JSON.stringify(fullSessionData)
     );
-
-    // Connect server to SSE transport
-    // Note: Type assertion needed due to SDK type compatibility issue
-    await server.connect(transport as unknown as Parameters<typeof server.connect>[0]);
 
     // Store runtime instances in memory
     this.runtimeSessions.set(sessionId, { server, transport, transportType: 'sse' });

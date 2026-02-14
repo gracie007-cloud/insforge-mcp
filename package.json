@@ -6,7 +6,8 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "insforge-mcp": "./dist/index.js"
+    "insforge-mcp": "./dist/index.js",
+    "insforge-mcp-server": "./dist/http/server.js"
   },
   "scripts": {
     "dev:stdio": "tsx watch src/stdio/index.ts",
@@ -50,7 +51,6 @@
   "devDependencies": {
     "@types/archiver": "^7.0.0",
     "@types/express": "^5.0.3",
-    "@types/ioredis": "^4.28.10",
     "@types/node": "^20.10.5",
     "rimraf": "^5.0.5",
     "tsup": "^8.5.0",

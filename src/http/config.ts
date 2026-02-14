@@ -60,13 +60,13 @@ export const OAUTH_CONFIG = {
   supportedScopes: ['mcp:read', 'mcp:write', 'project:select'],
 
   /** Grant types supported */
-  grantTypes: ['authorization_code', 'refresh_token'],
+  grantTypes: ['authorization_code'],
 
   /** Response types supported */
   responseTypes: ['code'],
 
-  /** Code challenge methods supported */
-  codeChallengesMethods: ['S256', 'plain'],
+  /** Code challenge methods supported (only S256 for security) */
+  codeChallengesMethods: ['S256'],
 } as const;
 
 // ============================================================================

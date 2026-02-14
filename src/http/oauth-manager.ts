@@ -115,6 +115,12 @@ export class OAuthManager {
     codeChallenge?: string;
     codeChallengeMethod?: string;
   }): Promise<{ stateId: string; insforgeCodeChallenge: string }> {
+    // Validate code_challenge_method early - only S256 is supported
+    // Reject 'plain' and other methods to prevent downgrade attacks
+    if (params.codeChallenge && params.codeChallengeMethod && params.codeChallengeMethod !== 'S256') {
+      throw new Error(`Unsupported code_challenge_method: ${params.codeChallengeMethod}. Only S256 is supported.`);
+    }
+
     const redis = getRedisClient();
     const stateId = generateCode();
 
@@ -122,8 +128,10 @@ export class OAuthManager {
     const insforgeCodeVerifier = generateCodeVerifier();
     const insforgeCodeChallenge = generateCodeChallenge(insforgeCodeVerifier);
 
+    // Normalize codeChallengeMethod to S256 if code challenge is provided
     const authState: AuthorizationState = {
       ...params,
+      codeChallengeMethod: params.codeChallenge ? 'S256' : undefined,
       insforgeCodeVerifier,
       createdAt: Date.now(),
     };
@@ -219,6 +227,8 @@ export class OAuthManager {
   /**
    * Exchange authorization code for token binding info
    * This is called by the MCP client after OAuth callback
+   *
+   * Uses atomic GETDEL to prevent authorization code replay attacks
    */
   async exchangeCode(
     code: string,
@@ -226,7 +236,10 @@ export class OAuthManager {
     codeVerifier?: string
   ): Promise<{ tokenHash: string }> {
     const redis = getRedisClient();
-    const codeData = await redis.get(AUTH_CODE_PREFIX + code);
+
+    // Atomically get and delete the code to prevent replay attacks
+    // GETDEL returns the value and deletes the key in one operation
+    const codeData = await redis.getdel(AUTH_CODE_PREFIX + code);
 
     if (!codeData) {
       throw new Error('Invalid or expired authorization code');
@@ -240,28 +253,27 @@ export class OAuthManager {
       throw new Error('Redirect URI mismatch');
     }
 
-    // Validate PKCE if used
+    // Validate PKCE if code challenge was provided during authorization
     if (codeChallenge) {
       if (!codeVerifier) {
         throw new Error('Code verifier required');
       }
 
-      let computedChallenge: string;
-      if (codeChallengeMethod === 'S256') {
-        computedChallenge = createHash('sha256')
-          .update(codeVerifier)
-          .digest('base64url');
-      } else {
-        computedChallenge = codeVerifier;
+      // Explicitly validate code challenge method
+      // Only S256 is secure; 'plain' is explicitly rejected per security best practices
+      if (codeChallengeMethod && codeChallengeMethod !== 'S256') {
+        throw new Error(`Unsupported code_challenge_method: ${codeChallengeMethod}. Only S256 is supported.`);
       }
+
+      // Always use S256 for verification (treat missing method as S256)
+      const computedChallenge = createHash('sha256')
+        .update(codeVerifier)
+        .digest('base64url');
 
       if (computedChallenge !== codeChallenge) {
         throw new Error('Code verifier mismatch');
       }
     }
-
-    // Delete the code (single use)
-    await redis.del(AUTH_CODE_PREFIX + code);
 
     return { tokenHash };
   }
