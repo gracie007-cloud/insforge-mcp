@@ -36,18 +36,21 @@
     "server.json"
   ],
   "dependencies": {
-    "@insforge/shared-schemas": "1.1.42",
+    "@insforge/shared-schemas": "1.1.43",
     "@modelcontextprotocol/sdk": "^1.15.1",
-    "@types/express": "^5.0.3",
     "archiver": "^7.0.1",
     "commander": "^14.0.0",
+    "dotenv": "^17.3.1",
     "express": "^5.1.0",
     "form-data": "^4.0.4",
+    "ioredis": "^5.9.3",
     "node-fetch": "^3.3.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/archiver": "^7.0.0",
+    "@types/express": "^5.0.3",
+    "@types/ioredis": "^4.28.10",
     "@types/node": "^20.10.5",
     "rimraf": "^5.0.5",
     "tsup": "^8.5.0",

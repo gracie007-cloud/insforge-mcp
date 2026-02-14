@@ -10,6 +10,6 @@ export default defineConfig({
     js: '#!/usr/bin/env node',
   },
   noExternal: ['@insforge/shared-schemas'],
-  external: ['@modelcontextprotocol/sdk', 'commander', 'node-fetch', 'zod', 'express'],
+  external: ['@modelcontextprotocol/sdk', 'commander', 'node-fetch', 'zod', 'express', 'ioredis'],
   clean: true,
 });
