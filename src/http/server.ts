@@ -143,10 +143,9 @@ app.get(API_ENDPOINTS.health, async (_req: Request, res: Response) => {
 });
 
 // OAuth 2.0 Authorization Server Metadata (RFC 8414)
-app.get(OAUTH_ENDPOINTS.metadata, (req: Request, res: Response) => {
-  const protocol = req.protocol || 'http';
-  const host = req.get('host') || 'localhost:3000';
-  const baseUrl = `${protocol}://${host}`;
+// Uses SERVER_CONFIG.publicUrl as the canonical base URL to avoid host header spoofing
+app.get(OAUTH_ENDPOINTS.metadata, (_req: Request, res: Response) => {
+  const baseUrl = SERVER_CONFIG.publicUrl;
 
   res.json({
     issuer: baseUrl,
@@ -163,11 +162,9 @@ app.get(OAUTH_ENDPOINTS.metadata, (req: Request, res: Response) => {
 
 // OAuth 2.0 Protected Resource Metadata (for MCP discovery)
 // The resource field must match what the client is trying to access
-// We use the origin (baseUrl) as the resource identifier since both /mcp and /sse are on the same origin
-app.get(OAUTH_ENDPOINTS.protectedResource, (req: Request, res: Response) => {
-  const protocol = req.protocol || 'http';
-  const host = req.get('host') || 'localhost:3000';
-  const baseUrl = `${protocol}://${host}`;
+// Uses SERVER_CONFIG.publicUrl as the canonical base URL to avoid host header spoofing
+app.get(OAUTH_ENDPOINTS.protectedResource, (_req: Request, res: Response) => {
+  const baseUrl = SERVER_CONFIG.publicUrl;
 
   // Return the origin as the resource, which covers both /mcp and /sse endpoints
   // This allows OAuth to work for any endpoint on this server
@@ -844,9 +841,13 @@ app.delete(STREAMABLE_HTTP_ENDPOINTS.mcp, async (req: Request, res: Response) =>
     });
   }
 
-  await runtime.transport.handleRequest(req, res, req.body);
-  await sessionManager.deleteSession(sessionId);
-  console.log(`[Streamable HTTP] Session ${sessionId} closed`);
+  try {
+    await runtime.transport.handleRequest(req, res, req.body);
+  } finally {
+    // Always clean up the session, even if handleRequest throws
+    await sessionManager.deleteSession(sessionId);
+    console.log(`[Streamable HTTP] Session ${sessionId} closed`);
+  }
 });
 
 // ============================================================================
@@ -925,17 +926,47 @@ app.get(SSE_ENDPOINTS.sse, async (req: Request, res: Response) => {
 
   // Create and connect MCP server
   const sessionManager = getSessionManager();
-  await sessionManager.createSSESession(transport.sessionId, {
-    apiKey: validProjectInfo.apiKey,
-    apiBaseUrl: validProjectInfo.apiBaseUrl,
-    projectId: validProjectInfo.projectId,
-    projectName: validProjectInfo.projectName,
-    userId: validProjectInfo.userId,
-    organizationId: validProjectInfo.organizationId,
-    oauthTokenHash: validProjectInfo.oauthTokenHash,
-  }, transport);
+  try {
+    await sessionManager.createSSESession(transport.sessionId, {
+      apiKey: validProjectInfo.apiKey,
+      apiBaseUrl: validProjectInfo.apiBaseUrl,
+      projectId: validProjectInfo.projectId,
+      projectName: validProjectInfo.projectName,
+      userId: validProjectInfo.userId,
+      organizationId: validProjectInfo.organizationId,
+      oauthTokenHash: validProjectInfo.oauthTokenHash,
+    }, transport);
 
-  console.log(`[SSE] MCP server connected for session: ${transport.sessionId}`);
+    console.log(`[SSE] MCP server connected for session: ${transport.sessionId}`);
+  } catch (error) {
+    console.error(`[SSE] Failed to create session ${transport.sessionId}:`, error);
+
+    // Clean up: remove transport from registry
+    sseTransports.delete(transport.sessionId);
+
+    // Attempt to close the transport gracefully
+    try {
+      await transport.close();
+    } catch (closeError) {
+      console.error(`[SSE] Error closing transport ${transport.sessionId}:`, closeError);
+    }
+
+    // Attempt to delete any partially created session (ignore errors if it wasn't created)
+    sessionManager.deleteSession(transport.sessionId).catch(() => {
+      // Session may not have been persisted yet, ignore error
+    });
+
+    // End the response if still open
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: 'session_creation_failed',
+        error_description: error instanceof Error ? error.message : 'Failed to create MCP session',
+      });
+    } else {
+      // Headers already sent (SSE started), just end the connection
+      res.end();
+    }
+  }
 });
 
 /**
@@ -1037,30 +1068,46 @@ async function startServer() {
     const shutdown = async (signal: string) => {
       console.log(`\n🛑 Received ${signal}, shutting down...`);
 
-      // Close SSE transports
-      console.log(`[Shutdown] Closing ${sseTransports.size} SSE connections...`);
-      for (const [sessionId, transport] of sseTransports) {
-        try {
-          await transport.close();
-        } catch (error) {
-          console.error(`[Shutdown] Error closing SSE transport ${sessionId}:`, error);
-        }
-      }
-      sseTransports.clear();
-
-      const sessionManager = getSessionManager();
-      await sessionManager.closeAllSessions();
-      await closeRedisClient();
-
-      server.close(() => {
-        console.log('✅ Server shutdown complete');
-        process.exit(0);
-      });
-
-      setTimeout(() => {
+      // Schedule forced exit timer FIRST to ensure we never hang
+      const forceExitTimer = setTimeout(() => {
         console.error('⚠️ Forced shutdown after timeout');
         process.exit(1);
       }, 10000);
+
+      try {
+        // Close SSE transports
+        console.log(`[Shutdown] Closing ${sseTransports.size} SSE connections...`);
+        for (const [sessionId, transport] of sseTransports) {
+          try {
+            await transport.close();
+          } catch (error) {
+            console.error(`[Shutdown] Error closing SSE transport ${sessionId}:`, error);
+          }
+        }
+        sseTransports.clear();
+
+        // Close all MCP sessions
+        try {
+          const sessionManager = getSessionManager();
+          await sessionManager.closeAllSessions();
+        } catch (error) {
+          console.error('[Shutdown] Error closing sessions:', error);
+        }
+
+        // Close Redis connection
+        try {
+          await closeRedisClient();
+        } catch (error) {
+          console.error('[Shutdown] Error closing Redis client:', error);
+        }
+      } finally {
+        // Always close the HTTP server, even if cleanup fails
+        server.close(() => {
+          clearTimeout(forceExitTimer);
+          console.log('✅ Server shutdown complete');
+          process.exit(0);
+        });
+      }
     };
 
     process.on('SIGINT', () => shutdown('SIGINT'));
