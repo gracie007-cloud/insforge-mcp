@@ -207,7 +207,7 @@ app.post(OAUTH_ENDPOINTS.register, async (req: Request, res: Response) => {
     client_id: clientId,
     client_name: client_name || 'MCP Client',
     redirect_uris,
-    grant_types: grant_types || ['authorization_code', 'refresh_token'],
+    grant_types: grant_types || OAUTH_CONFIG.grantTypes,
     response_types: response_types || ['code'],
     token_endpoint_auth_method: token_endpoint_auth_method || 'none',
     scope: scope || 'mcp:read mcp:write',
