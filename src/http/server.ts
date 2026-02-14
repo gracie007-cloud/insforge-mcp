@@ -29,6 +29,10 @@ import { renderProjectSelectionPage } from './templates/project-selection.js';
 
 const app = express();
 
+// Trust proxy headers (X-Forwarded-Proto, X-Forwarded-For, etc.)
+// Required for correct protocol detection behind reverse proxies (nginx, AWS ALB, etc.)
+app.set('trust proxy', true);
+
 // Parse JSON bodies
 app.use(express.json({ limit: '10mb' }));
 
