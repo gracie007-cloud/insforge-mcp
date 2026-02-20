@@ -110,13 +110,8 @@ export function renderProjectSelectionPage(options: ProjectSelectionPageOptions)
     }
 
     .logo {
-      text-align: center;
-      margin-bottom: 40px;
-    }
-
-    .logo svg {
-      width: 48px;
-      height: 48px;
+      text-align: left;
+      margin-bottom: 20px;
     }
 
     h1 {
@@ -325,11 +320,7 @@ export function renderProjectSelectionPage(options: ProjectSelectionPageOptions)
 <body>
   <div class="container">
     <div class="logo">
-      <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect width="48" height="48" rx="12" fill="#1C1C1C"/>
-        <path d="M14 16L24 12L34 16V24C34 30 29 35 24 36C19 35 14 30 14 24V16Z" stroke="#6EE7B7" stroke-width="2" fill="none"/>
-        <path d="M20 24L23 27L28 21" stroke="#6EE7B7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
+      <img alt="InsForge Logo" width="100" height="24" decoding="async" data-nimg="1" style="color:transparent" src="https://insforge.dev/assets/logos/logo_text.svg">
     </div>
 
     <h1>Select a Project</h1>
@@ -339,9 +330,6 @@ export function renderProjectSelectionPage(options: ProjectSelectionPageOptions)
 
     <a href="javascript:history.back()" class="cancel-link">Cancel</a>
 
-    <div class="footer">
-      <p class="footer-text">Powered by <a href="https://insforge.dev" target="_blank">InsForge</a></p>
-    </div>
   </div>
 </body>
 </html>`;
