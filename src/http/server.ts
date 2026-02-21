@@ -19,9 +19,11 @@ import {
   OAUTH_ENDPOINTS,
   API_ENDPOINTS,
   isOAuthConfigured,
+  isAnalyticsConfigured,
   validateConfig,
 } from './config.js';
 import { renderProjectSelectionPage } from './templates/project-selection.js';
+import { getAnalyticsService, extractClientInfo } from './analytics.js';
 
 // ============================================================================
 // Express App Setup
@@ -352,6 +354,11 @@ app.get(OAUTH_ENDPOINTS.callback, async (req: Request, res: Response) => {
 
   if (error) {
     console.error('[OAuth] Insforge returned error:', error, error_description);
+    getAnalyticsService().trackOAuthFailure({
+      errorType: 'insforge_error',
+      errorDescription: (error_description as string) || (error as string) || 'Unknown Insforge error',
+      endpoint: '/oauth/callback',
+    });
     const authState = state ? await oauthManager.getAuthorizationState(state as string) : null;
 
     if (authState?.redirectUri) {
@@ -370,6 +377,11 @@ app.get(OAUTH_ENDPOINTS.callback, async (req: Request, res: Response) => {
   }
 
   if (!code || !state) {
+    getAnalyticsService().trackOAuthFailure({
+      errorType: 'invalid_request',
+      errorDescription: 'Missing required parameters: code, state',
+      endpoint: '/oauth/callback',
+    });
     return res.status(400).json({
       error: 'invalid_request',
       error_description: 'Missing required parameters: code, state',
@@ -379,6 +391,11 @@ app.get(OAUTH_ENDPOINTS.callback, async (req: Request, res: Response) => {
   try {
     const authState = await oauthManager.getAuthorizationState(state as string);
     if (!authState) {
+      getAnalyticsService().trackOAuthFailure({
+        errorType: 'invalid_request',
+        errorDescription: 'Invalid or expired state',
+        endpoint: '/oauth/callback',
+      });
       return res.status(400).json({
         error: 'invalid_request',
         error_description: 'Invalid or expired state',
@@ -410,6 +427,11 @@ app.get(OAUTH_ENDPOINTS.callback, async (req: Request, res: Response) => {
 
     if (tokens.error || !tokens.access_token) {
       console.error('[OAuth] Token exchange error:', tokens);
+      getAnalyticsService().trackOAuthFailure({
+        errorType: 'token_exchange_failed',
+        errorDescription: 'Token exchange failed',
+        endpoint: '/oauth/callback',
+      });
       return res.status(400).json({
         error: 'token_exchange_failed',
         error_description: tokens.error_description || tokens.error || 'No access token returned',
@@ -428,6 +450,11 @@ app.get(OAUTH_ENDPOINTS.callback, async (req: Request, res: Response) => {
     res.redirect(`${SERVER_CONFIG.publicUrl}${OAUTH_ENDPOINTS.selectProject}?state_id=${state}`);
   } catch (error) {
     console.error('OAuth callback error:', error);
+    getAnalyticsService().trackOAuthFailure({
+      errorType: 'server_error',
+      errorDescription: 'Failed to process callback',
+      endpoint: '/oauth/callback',
+    });
     res.status(500).json({
       error: 'server_error',
       error_description: error instanceof Error ? error.message : 'Failed to process callback',
@@ -535,6 +562,11 @@ app.post(OAUTH_ENDPOINTS.token, async (req: Request, res: Response) => {
 
   if (grant_type === 'authorization_code') {
     if (!code || !redirect_uri) {
+      getAnalyticsService().trackOAuthFailure({
+        errorType: 'invalid_request',
+        errorDescription: 'Missing required parameters: code, redirect_uri',
+        endpoint: '/oauth/token',
+      });
       return res.status(400).json({
         error: 'invalid_request',
         error_description: 'Missing required parameters: code, redirect_uri',
@@ -549,6 +581,11 @@ app.post(OAUTH_ENDPOINTS.token, async (req: Request, res: Response) => {
         code_verifier as string | undefined
       );
 
+      getAnalyticsService().trackOAuthSuccess({
+        clientId: req.body.client_id || 'unknown',
+        scope: 'mcp:read mcp:write',
+      });
+
       res.json({
         access_token: tokenHash,
         token_type: 'Bearer',
@@ -557,17 +594,32 @@ app.post(OAUTH_ENDPOINTS.token, async (req: Request, res: Response) => {
       });
     } catch (error) {
       console.error('OAuth token error:', error);
+      getAnalyticsService().trackOAuthFailure({
+        errorType: 'invalid_grant',
+        errorDescription: 'Invalid authorization code',
+        endpoint: '/oauth/token',
+      });
       res.status(400).json({
         error: 'invalid_grant',
         error_description: error instanceof Error ? error.message : 'Invalid authorization code',
       });
     }
   } else if (grant_type === 'refresh_token') {
+    getAnalyticsService().trackOAuthFailure({
+      errorType: 'unsupported_grant_type',
+      errorDescription: 'Refresh tokens are not supported',
+      endpoint: '/oauth/token',
+    });
     return res.status(400).json({
       error: 'unsupported_grant_type',
       error_description: 'Refresh tokens are not supported',
     });
   } else {
+    getAnalyticsService().trackOAuthFailure({
+      errorType: 'unsupported_grant_type',
+      errorDescription: 'Only authorization_code grant type is supported',
+      endpoint: '/oauth/token',
+    });
     return res.status(400).json({
       error: 'unsupported_grant_type',
       error_description: 'Only authorization_code grant type is supported',
@@ -767,6 +819,17 @@ app.post(STREAMABLE_HTTP_ENDPOINTS.mcp, async (req: Request, res: Response) => {
     try {
       await sessionManager.createSession(newSessionId, projectInfo, transport);
       console.log('[Streamable HTTP] New session created:', newSessionId);
+
+      const clientInfo = extractClientInfo(req.body);
+      getAnalyticsService().trackSessionCreated({
+        clientName: clientInfo?.name,
+        clientVersion: clientInfo?.version,
+        userAgent: req.headers['user-agent'] as string | undefined,
+        transportType: 'streamable_http',
+        projectId: projectInfo.projectId,
+        userId: projectInfo.userId,
+        organizationId: projectInfo.organizationId,
+      });
     } catch (error) {
       console.error('[Streamable HTTP] Failed to create session:', error);
       return res.status(500).json({
@@ -941,6 +1004,16 @@ app.get(SSE_ENDPOINTS.sse, async (req: Request, res: Response) => {
     }, transport);
 
     console.log(`[SSE] MCP server connected for session: ${transport.sessionId}`);
+
+    getAnalyticsService().trackSessionCreated({
+      clientName: undefined, // SSE: clientInfo not available until initialize message
+      clientVersion: undefined,
+      userAgent: req.headers['user-agent'] as string | undefined,
+      transportType: 'sse',
+      projectId: validProjectInfo.projectId,
+      userId: validProjectInfo.userId,
+      organizationId: validProjectInfo.organizationId,
+    });
   } catch (error) {
     console.error(`[SSE] Failed to create session ${transport.sessionId}:`, error);
 
@@ -1065,6 +1138,7 @@ async function startServer() {
    • Redis:      ${redisConfig.host}:${redisConfig.port} (TLS: ${redisConfig.tls}, Cluster: ${redisConfig.cluster})
    • Insforge:   ${INSFORGE_CONFIG.apiBase}
    • Frontend:   ${INSFORGE_CONFIG.frontendUrl}
+   • Analytics:  ${isAnalyticsConfigured() ? 'Mixpanel enabled' : 'Disabled (set MIXPANEL_TOKEN)'}
 `);
     });
 

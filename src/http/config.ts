@@ -103,6 +103,22 @@ export const SESSION_CONFIG = {
 } as const;
 
 // ============================================================================
+// Analytics Configuration
+// ============================================================================
+
+export const ANALYTICS_CONFIG = {
+  /** Mixpanel project token */
+  mixpanelToken: process.env.MIXPANEL_TOKEN || '',
+} as const;
+
+/**
+ * Check if analytics is configured and enabled
+ */
+export function isAnalyticsConfigured(): boolean {
+  return !!ANALYTICS_CONFIG.mixpanelToken && process.env.ENABLE_ANALYTICS !== 'false';
+}
+
+// ============================================================================
 // MCP Endpoint Paths
 // ============================================================================
 
@@ -190,5 +206,9 @@ export function validateConfig(): void {
   if (!isOAuthConfigured()) {
     console.warn('[Config] WARNING: OAuth client credentials not configured.');
     console.warn('[Config] Set INSFORGE_CLIENT_ID and INSFORGE_CLIENT_SECRET environment variables.');
+  }
+
+  if (!isAnalyticsConfigured()) {
+    console.log('[Config] Analytics not configured. Set MIXPANEL_TOKEN to enable Mixpanel tracking.');
   }
 }
