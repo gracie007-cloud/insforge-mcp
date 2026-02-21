@@ -246,12 +246,15 @@ app.get(OAUTH_ENDPOINTS.authorize, async (req: Request, res: Response) => {
     });
   }
 
-  if (!client_id || !redirect_uri || !response_type || !scope) {
+  if (!client_id || !redirect_uri || !response_type) {
     return res.status(400).json({
       error: 'invalid_request',
-      error_description: 'Missing required parameters: client_id, redirect_uri, response_type, scope',
+      error_description: 'Missing required parameters: client_id, redirect_uri, response_type',
     });
   }
+
+  // Default scope if not provided (scope is optional per OAuth 2.0 spec)
+  const resolvedScope = (scope as string) || OAUTH_CONFIG.supportedScopes.join(' ');
 
   if (response_type !== 'code') {
     return res.status(400).json({
@@ -312,7 +315,7 @@ app.get(OAUTH_ENDPOINTS.authorize, async (req: Request, res: Response) => {
     const { stateId, insforgeCodeChallenge } = await oauthManager.createAuthorizationState({
       clientId: client_id as string,
       redirectUri: redirect_uri as string,
-      scope: scope as string,
+      scope: resolvedScope,
       state: state as string | undefined,
       codeChallenge: code_challenge as string | undefined,
       codeChallengeMethod: code_challenge_method as string | undefined,
